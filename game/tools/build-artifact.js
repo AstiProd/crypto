@@ -7,7 +7,8 @@ const path = require('path');
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'style.css'), 'utf8');
-const js = fs.readFileSync(path.join(root, 'game.js'), 'utf8');
+const scripts = ['ads.config.js', 'ads.js', 'game.js']
+  .map(f => fs.readFileSync(path.join(root, f), 'utf8'));
 
 const m = html.match(/<div id="app">[\s\S]*<\/div>\s*<script/);
 if (!m) { console.error('Impossible de trouver le bloc #app dans index.html'); process.exit(1); }
@@ -22,7 +23,7 @@ ${css}
 </style>
 ${markup}
 <script>
-${js}
+${scripts.join('\n')}
 </script>
 `;
 

@@ -1,0 +1,26 @@
+# dépendances
+node_modules/
+
+# dossier web généré par tools/build-www.js
+www/
+
+# secrets de signature Android — ne jamais committer
+android/key.properties
+*.keystore
+*.jks
+
+# artefacts de build
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+android/app/release/
+ios/App/Pods/
+ios/App/App.xcworkspace/xcuserdata/
+ios/App/App.xcodeproj/xcuserdata/
+DerivedData/
+*.ipa
+*.apk
+*.aab
+
+.DS_Store

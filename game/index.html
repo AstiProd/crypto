@@ -19,6 +19,7 @@
       <div class="credits" id="creditsBox">
         <span class="chip">◈</span><span id="creditsVal">0</span>
       </div>
+      <div class="boost-chip" id="boostChip">×2 <span id="boostTime">0:00</span></div>
       <div class="top-right">
         <button class="icon-btn" id="btnSound" title="Son">🔊</button>
         <button class="icon-btn" id="btnMenu" title="Menu">⋯</button>
@@ -34,6 +35,10 @@
       <button class="action-btn" id="btnShop"><span class="ico">🛰️</span><span>Foreuses</span></button>
       <button class="action-btn" id="btnUpgrades"><span class="ico">⚡</span><span>Améliorations</span></button>
     </div>
+
+    <button class="rw-btn" id="btnBoost" type="button">
+      <span class="play">▶</span><span>Boost ×2<small id="boostLabel">60 s de recettes doublées</small></span>
+    </button>
 
     <div id="joystick" class="joystick">
       <div class="joy-base"></div>
@@ -94,10 +99,15 @@
     <div class="panel-head"><h2>Rapport de mission</h2></div>
     <div class="welcome">
       <p class="big" id="offlineText"></p>
+      <button class="rw-btn" id="btnOfflineX2" type="button" style="width:100%;justify-content:center;margin-bottom:10px">
+        <span class="play">▶</span><span>Doubler la récompense</span>
+      </button>
       <button class="cta" data-close>Récupérer</button>
     </div>
   </div>
 </div>
+<script src="ads.config.js"></script>
+<script src="ads.js"></script>
 <script src="game.js"></script>
 </body>
 </html>

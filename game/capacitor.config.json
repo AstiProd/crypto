@@ -1,0 +1,28 @@
+{
+  "appId": "com.astiprod.astrobasetycoon",
+  "appName": "Astro Base Tycoon",
+  "webDir": "www",
+  "backgroundColor": "#05070f",
+  "android": {
+    "backgroundColor": "#05070f",
+    "allowMixedContent": false
+  },
+  "ios": {
+    "backgroundColor": "#05070f",
+    "contentInset": "never",
+    "scrollEnabled": false
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1200,
+      "backgroundColor": "#05070f",
+      "showSpinner": false,
+      "androidScaleType": "CENTER_CROP"
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#05070f",
+      "overlaysWebView": true
+    }
+  }
+}

@@ -61,6 +61,10 @@ var UPGRADES = [
   { id: 'drones',   icon: '🤖', name: 'Drones ouvriers',   desc: 'Un assistant automatique de plus', max: 4, cost: function (l) { return Math.round(1500 * Math.pow(3.4, l)); } }
 ];
 
+function adCfg(placement) {
+  var C = window.ADS_CONFIG || {};
+  return (C.placements && C.placements[placement]) || {};
+}
 function playerSpeed() { return 3.5 + 0.55 * S.up.speed; }
 function playerCap() { return 8 + 5 * S.up.capacity; }
 function refinePeriod() { return 0.55 * Math.pow(0.82, S.up.refinery); }
@@ -115,7 +119,9 @@ var S = {
   bestTier: 0,
   playTime: 0,
   lastSeen: Date.now(),
-  started: false
+  started: false,
+  boost: 0,              // secondes restantes de recettes doublées (pub récompensée)
+  pendingOffline: 0      // montant hors-ligne, doublable une fois par pub
 };
 
 var FX = { floaters: [], parts: [], rings: [] };
@@ -181,6 +187,8 @@ function save() {
       totalMined: S.totalMined,
       bestTier: S.bestTier,
       playTime: S.playTime,
+      boost: S.boost,
+      ads: window.Ads ? window.Ads.serialize() : null,
       lastSeen: Date.now(),
       pads: S.pads.map(function (p) {
         return { u: p.unlocked, paid: p.paid, t: p.drill ? p.drill.tier : -1 };
@@ -205,6 +213,8 @@ function load() {
     S.totalMined = d.totalMined || 0;
     S.bestTier = d.bestTier || 0;
     S.playTime = d.playTime || 0;
+    S.boost = d.boost || 0;
+    if (window.Ads) window.Ads.restore(d.ads);
     S.lastSeen = d.lastSeen || Date.now();
     for (var i = 0; i < S.pads.length && i < d.pads.length; i++) {
       var sp = d.pads[i], p = S.pads[i];
@@ -511,11 +521,14 @@ function updateCarrier(a, dt, cfg) {
   if (a.carryType === 'chip' && a.carry.length &&
       dist2(a.x, a.y, TERMINAL_POS.x, TERMINAL_POS.y) < 1.6 * 1.6 && a.actTimer <= 0) {
     var c = a.carry.pop();
-    S.credits += c.value; S.totalEarned += c.value;
+    var mult = S.boost > 0 ? (adCfg('boost').multiplier || 2) : 1;
+    var gain = c.value * mult;
+    S.credits += gain; S.totalEarned += gain;
     a.actTimer = cfg.rate * 0.8;
     if (!a.carry.length) a.carryType = null;
-    floater(TERMINAL_POS.x, TERMINAL_POS.y, 1.4, '+' + fmt(c.value), '#8affe4');
-    burst(TERMINAL_POS.x, TERMINAL_POS.y, 1.1, '#48e2c6', 5, 0.6);
+    floater(TERMINAL_POS.x, TERMINAL_POS.y, 1.4, '+' + fmt(gain) + (mult > 1 ? ' ×2' : ''),
+            mult > 1 ? '#ffd76b' : '#8affe4');
+    burst(TERMINAL_POS.x, TERMINAL_POS.y, 1.1, mult > 1 ? '#ffca3a' : '#48e2c6', 5, 0.6);
     if (cfg.sound) Audio_.cash();
     creditsPulse();
     return;
@@ -550,6 +563,7 @@ function updateUnlock(dt) {
     floater(standing.x, standing.y, 1.6, 'Socle actif !', '#7ab8ff');
     toast('Nouveau socle en ligne 🛰️', 'good');
     save();
+    if (window.Ads) { window.Ads.unlocks++; window.Ads.maybeInterstitial('socle_debloque'); }
   }
 }
 
@@ -665,6 +679,7 @@ function updateHint() {
 
 function update(dt) {
   S.playTime += dt;
+  if (S.boost > 0) S.boost = Math.max(0, S.boost - dt);
   updatePads(dt);
   updatePlayer(dt);
   updateDrones(dt);
@@ -1514,6 +1529,11 @@ function drawAstronaut(a, t) {
   var swing = moving ? Math.sin(a.walk * 2.2) : Math.sin(a.bob * 0.5) * 0.15;
   var bob = moving ? Math.abs(Math.sin(a.walk * 2.2)) * 3 * k : Math.sin(a.bob * 0.5) * 1.5 * k;
   shadow(a.x, a.y, 0.44, 0.36);
+  if (S.boost > 0) {                                  // aura du bonus ×2
+    var pulse = 0.5 + 0.3 * Math.sin(t * 4);
+    discStroke(a.x, a.y, 0.02, 0.52 + 0.05 * Math.sin(t * 4), rgba('#ffca3a', pulse), 3.5);
+    disc(a.x, a.y, 0.015, 0.46, rgba('#ffca3a', 0.12));
+  }
 
   ctx.save();
   ctx.translate(s.x, s.y - bob);
@@ -1848,6 +1868,18 @@ function renderShop() {
       : '<span style="color:#ffc9cf">Aucun socle libre — va en débloquer un</span>') + '</div></div>' +
     '<button class="buy" id="buyDrill" ' + (canPay && free ? '' : 'disabled') + '>' + fmt(cost) + ' ◈</button>' +
     '</div>';
+  var adWait = window.Ads ? window.Ads.waitFor('freeDrill') : 0;
+  var adOk = window.Ads && window.Ads.canRewarded('freeDrill') && free > 0;
+  html += '<div class="row">' +
+    '<div class="emoji">🎁</div>' +
+    '<div class="txt"><b>Foreuse offerte</b>' +
+    '<small>Regarde une courte vidéo, repars avec une ' + TIERS[0].name + '</small>' +
+    '<div class="val">' + (free
+      ? (adWait ? 'Disponible dans ' + mmss(adWait) : '<span class="to">Disponible</span>')
+      : '<span style="color:#ffc9cf">Aucun socle libre</span>') + '</div></div>' +
+    '<button class="rw-btn" id="buyDrillAd"' + (adOk ? '' : ' disabled') + '>' +
+    '<span class="play">▶</span><span>Gratuit</span></button>' +
+    '</div>';
   html += '<p class="panel-sub" style="margin-top:14px">Catalogue des rangs — chaque fusion double presque la valeur du cristal.</p>';
   for (var i = 0; i <= Math.min(MAX_TIER, S.bestTier + 1); i++) {
     var T = TIERS[i], owned = S.pads.some(function (p) { return p.drill && p.drill.tier === i; });
@@ -1874,6 +1906,32 @@ function renderShop() {
     toast('Foreuse installée 🛠️', 'good');
     save(); renderShop();
   };
+
+  var adBtn = el('buyDrillAd');
+  if (adBtn) adBtn.onclick = function () {
+    if (!window.Ads || !window.Ads.canRewarded('freeDrill')) return;
+    var target = null;
+    for (var i = 0; i < S.pads.length; i++) if (S.pads[i].unlocked && !S.pads[i].drill) { target = S.pads[i]; break; }
+    if (!target) { Audio_.error(); toast('Aucun socle libre', 'bad'); return; }
+    adBtn.disabled = true;
+    window.Ads.showRewarded('freeDrill').then(function (ok) {
+      if (!ok) { toast('Vidéo interrompue — pas de récompense', 'bad'); renderShop(); return; }
+      target.drill = { tier: 0, timer: 0, pulse: 1, spin: 0 };
+      target.pop = 1;
+      Audio_.buy();
+      burst(target.x, target.y, 0.6, TIERS[0].glow, 20, 1.2);
+      floater(target.x, target.y, 1.5, 'Mk-I offerte !', '#ffd76b');
+      toast('Foreuse offerte installée 🎁', 'good');
+      save(); renderShop();
+    });
+  };
+}
+
+/* mm:ss pour les compteurs publicitaires */
+function mmss(sec) {
+  sec = Math.max(0, Math.ceil(sec));
+  var m = Math.floor(sec / 60), r = sec % 60;
+  return m + ':' + (r < 10 ? '0' : '') + r;
 }
 
 /* ---------- améliorations ---------- */
@@ -1931,10 +1989,23 @@ function renderMenu() {
     '</div>' +
     '<button class="menu-btn" id="mHow">📖 Comment jouer</button>' +
     '<button class="menu-btn" id="mSound">' + (Audio_.on ? '🔊 Son : activé' : '🔇 Son : coupé') + '</button>' +
+    '<button class="menu-btn" id="mNoAds">' + (window.Ads && window.Ads.removed
+        ? '✅ Pubs supprimées — merci !'
+        : '🚫 Supprimer les pubs (achat intégré)') + '</button>' +
+    '<button class="menu-btn" id="mPrivacy">🔒 Confidentialité des publicités</button>' +
     '<button class="menu-btn danger" id="mReset">♻️ Nouvelle partie</button>' +
     '<p class="panel-sub" style="text-align:center;margin:6px 0 0">Astro Base Tycoon v1.0 — sauvegarde automatique</p>';
   el('mHow').onclick = function () { openPanel('panelWelcome'); };
   el('mSound').onclick = function () { toggleSound(); renderMenu(); };
+  el('mNoAds').onclick = function () {
+    if (!window.Ads) return;
+    if (window.Ads.removed) { toast('Les interstitiels sont déjà désactivés', 'good'); return; }
+    // Brancher ici l'achat intégré (voir store/CHECKLIST.md) ; en démo on l'active directement.
+    window.Ads.setRemoveAds(true);
+    toast('Interstitiels désactivés ✨', 'good');
+    save(); renderMenu();
+  };
+  el('mPrivacy').onclick = function () { if (window.Ads) window.Ads.privacyOptions(); };
   el('mReset').onclick = function () {
     if (!confirm('Effacer la base et recommencer à zéro ?')) return;
     try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
@@ -1956,7 +2027,62 @@ el('btnMenu').onclick = function () { renderMenu(); openPanel('panelMenu'); };
 el('btnSound').onclick = function () { Audio_.init(); toggleSound(); };
 el('btnPlay').onclick = function () { closeAll(); S.started = true; Audio_.init(); };
 
+var boostBtn = el('btnBoost'), boostChip = el('boostChip'), boostTime = el('boostTime'), boostLabel = el('boostLabel');
+var lastBoostTxt = '', lastBtnTxt = '';
+
+boostBtn.onclick = function () {
+  if (!window.Ads || !window.Ads.canRewarded('boost') || S.boost > 0) return;
+  boostBtn.disabled = true;
+  window.Ads.showRewarded('boost').then(function (ok) {
+    if (!ok) { toast('Vidéo interrompue — pas de bonus', 'bad'); return; }
+    S.boost = adCfg('boost').rewardSeconds || 60;
+    Audio_.merge();
+    toast('Recettes doublées pendant ' + Math.round(S.boost) + ' s !', 'good');
+    burst(S.player.x, S.player.y, 0.8, '#ffca3a', 22, 1.2);
+    save();
+  });
+};
+
+el('btnOfflineX2').onclick = function () {
+  var btn = el('btnOfflineX2');
+  if (!window.Ads || !S.pendingOffline) return;
+  btn.disabled = true;
+  window.Ads.showRewarded('offline').then(function (ok) {
+    if (!ok) { toast('Vidéo interrompue', 'bad'); btn.disabled = false; return; }
+    var bonus = S.pendingOffline;
+    S.credits += bonus; S.totalEarned += bonus;
+    S.pendingOffline = 0;
+    creditsPulse(); Audio_.cash();
+    el('offlineText').innerHTML = 'Récompense doublée !<br><b style="font-size:26px;color:#ffd76b">+' + fmt(bonus) + ' ◈</b>';
+    btn.style.display = 'none';
+    save();
+  });
+};
+
+function updateAdsHUD() {
+  // pastille de bonus actif
+  if (S.boost > 0) {
+    boostChip.classList.add('on');
+    var txt = mmss(S.boost);
+    if (txt !== lastBoostTxt) { boostTime.textContent = txt; lastBoostTxt = txt; }
+  } else if (boostChip.classList.contains('on')) {
+    boostChip.classList.remove('on');
+  }
+  // bouton de vidéo récompensée
+  var label, disabled;
+  if (!window.Ads || !window.Ads.ready) { label = 'Pubs indisponibles'; disabled = true; }
+  else if (S.boost > 0) { label = 'Bonus en cours…'; disabled = true; }
+  else {
+    var wait = window.Ads.waitFor('boost');
+    if (wait > 0) { label = 'Encore ' + mmss(wait); disabled = true; }
+    else { label = (adCfg('boost').rewardSeconds || 60) + ' s de recettes doublées'; disabled = false; }
+  }
+  if (label !== lastBtnTxt) { boostLabel.textContent = label; lastBtnTxt = label; }
+  if (boostBtn.disabled !== disabled && !(window.Ads && window.Ads.busy)) boostBtn.disabled = disabled;
+}
+
 function updateHUD(dt) {
+  updateAdsHUD();
   if (S.credits !== lastCredits) {
     lastCredits = S.credits;
     creditsVal.textContent = fmt(S.credits);
@@ -1985,7 +2111,8 @@ function frame(now) {
   last = now;
   var t = now / 1000;
 
-  if (S.started) {
+  var adBusy = !!(window.Ads && window.Ads.busy);
+  if (S.started && !adBusy) {
     update(dt);
     saveTimer += dt;
     if (saveTimer > 8) { saveTimer = 0; save(); }
@@ -2004,6 +2131,7 @@ function frame(now) {
 /* ------------------------------------------------------------------ */
 function boot() {
   buildDecor();
+  if (window.Ads) window.Ads.init();
   initWorld();
   var had = load();
   try {
@@ -2017,7 +2145,10 @@ function boot() {
     S.started = true;
     if (gain > 0) {
       S.credits += gain; S.totalEarned += gain;
+      S.pendingOffline = gain;
       el('offlineText').innerHTML = 'Pendant ton absence, la base a produit<br><b style="font-size:26px;color:#8affe4">' + fmt(gain) + ' ◈</b>';
+      el('btnOfflineX2').style.display = '';
+      el('btnOfflineX2').disabled = false;
       openPanel('panelOffline');
     }
   } else {

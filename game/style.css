@@ -119,10 +119,10 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block}
 @keyframes toastOut{to{opacity:0;transform:translateY(-10px)}}
 .hint{
   position:absolute;left:50%;transform:translateX(-50%);
-  bottom:calc(88px + var(--safe-bottom));
+  bottom:calc(148px + var(--safe-bottom));
   background:rgba(11,20,38,.86);border:2px solid rgba(122,184,255,.3);
   padding:8px 18px;border-radius:999px;font-size:14px;font-weight:700;color:#dbe9ff;
-  opacity:0;transition:opacity .2s;white-space:nowrap;max-width:86vw;overflow:hidden;text-overflow:ellipsis;
+  opacity:0;transition:opacity .2s;white-space:nowrap;max-width:80vw;overflow:hidden;text-overflow:ellipsis;
 }
 .hint.on{opacity:1}
 
@@ -134,10 +134,12 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block}
   width:min(560px,94vw);max-height:86vh;overflow:auto;
   background:linear-gradient(180deg,var(--panel-2),var(--panel));
   border:2px solid var(--line);border-radius:var(--radius);
-  padding:18px;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;
+  padding:18px;opacity:0;pointer-events:none;visibility:hidden;
+  transition:opacity .18s,transform .18s,visibility 0s linear .18s;
   box-shadow:0 24px 60px rgba(0,0,0,.6),inset 0 2px 0 rgba(255,255,255,.06);
 }
-.panel.on{opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1)}
+.panel.on{opacity:1;pointer-events:auto;visibility:visible;transform:translate(-50%,-50%) scale(1);
+  transition:opacity .18s,transform .18s,visibility 0s}
 .panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
 .panel h2{margin:0;font-size:23px;letter-spacing:.3px}
 .panel-sub{margin:0 0 14px;color:var(--muted);font-size:14px;line-height:1.45}
@@ -208,3 +210,88 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block}
   .credits.pulse{animation:none}
   .panel,.overlay,.carry-fill,.hint,.joystick{transition:none}
 }
+
+/* ================= PUBLICITÉ ================= */
+/* bouton « vidéo récompensée » */
+.rw-btn{
+  position:relative;display:flex;align-items:center;gap:9px;
+  padding:10px 15px 10px 12px;border-radius:16px;cursor:pointer;
+  background:linear-gradient(180deg,#ffd76b,#f2a726);
+  border:2px solid rgba(255,236,190,.75);color:#3a2400;
+  font-family:inherit;font-size:14.5px;font-weight:800;
+  box-shadow:0 5px 0 #a86b00;
+}
+.rw-btn:active{transform:translateY(3px);box-shadow:0 2px 0 #a86b00}
+.rw-btn[disabled]{
+  background:linear-gradient(180deg,#4b5b78,#37455f);border-color:rgba(160,190,230,.25);
+  color:#9fb0c9;box-shadow:0 5px 0 #26314a;cursor:not-allowed
+}
+.rw-btn .play{
+  width:24px;height:24px;border-radius:50%;display:grid;place-items:center;
+  background:rgba(58,36,0,.82);color:#ffd76b;font-size:11px;flex:0 0 auto
+}
+.rw-btn[disabled] .play{background:rgba(10,18,36,.5);color:#9fb0c9}
+.rw-btn small{display:block;font-size:11px;font-weight:700;opacity:.75}
+
+#btnBoost{position:absolute;right:12px;bottom:calc(78px + var(--safe-bottom));pointer-events:auto}
+.panel .rw-btn{pointer-events:auto}
+
+/* pastille de bonus actif */
+.boost-chip{
+  position:absolute;top:calc(62px + var(--safe-top));left:172px;
+  display:none;align-items:center;gap:6px;height:26px;padding:0 12px;
+  border-radius:999px;background:linear-gradient(180deg,#ffd76b,#f2a726);
+  color:#3a2400;font-size:13px;font-weight:900;
+  box-shadow:0 4px 0 rgba(0,0,0,.3);
+  font-variant-numeric:tabular-nums;
+}
+.boost-chip.on{display:flex;animation:chipIn .25s ease}
+@keyframes chipIn{from{transform:scale(.8);opacity:0}to{transform:none;opacity:1}}
+
+/* lecteur de démonstration */
+.ad-overlay{
+  position:fixed;inset:0;z-index:40;display:none;
+  align-items:center;justify-content:center;padding:18px;
+  background:rgba(2,5,14,.92);backdrop-filter:blur(3px);
+}
+.ad-overlay.on{display:flex}
+.ad-frame{
+  width:min(420px,94vw);border-radius:20px;overflow:hidden;
+  background:linear-gradient(180deg,#16213d,#0d1526);
+  border:2px solid rgba(140,190,255,.28);
+  box-shadow:0 30px 70px rgba(0,0,0,.65);
+  position:relative;
+}
+.ad-tag{
+  position:absolute;top:10px;left:10px;z-index:2;
+  background:rgba(0,0,0,.55);color:#dfe9ff;border:1px solid rgba(255,255,255,.2);
+  font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  padding:3px 8px;border-radius:6px;
+}
+.ad-art{
+  height:190px;position:relative;overflow:hidden;
+  background:radial-gradient(circle at 70% 25%,#3a2a6b,#0f1430 70%);
+}
+.ad-planet{
+  position:absolute;left:-40px;bottom:-70px;width:210px;height:210px;border-radius:50%;
+  background:radial-gradient(circle at 35% 30%,#7ce0ff,#2b6bb8 60%,#16305e);
+  box-shadow:0 0 60px rgba(80,180,255,.35);
+}
+.ad-ship{
+  position:absolute;right:44px;top:46px;font-size:44px;
+  animation:adFloat 2.4s ease-in-out infinite;
+}
+@keyframes adFloat{0%,100%{transform:translateY(0) rotate(-8deg)}50%{transform:translateY(-14px) rotate(4deg)}}
+.ad-body{padding:14px 16px 4px}
+.ad-title{font-size:18px}
+.ad-sub{margin:4px 0 0;color:var(--muted);font-size:13px;line-height:1.45}
+.ad-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px 16px}
+.ad-count{color:#8affe4;font-size:13px;font-weight:800;font-variant-numeric:tabular-nums}
+.ad-close{
+  border:none;border-radius:12px;padding:10px 18px;cursor:pointer;
+  font-family:inherit;font-weight:800;font-size:14px;color:#04231f;
+  background:linear-gradient(180deg,#6cf0d4,#22c0a4);box-shadow:0 4px 0 #0d7d69;
+}
+.ad-close:active{transform:translateY(3px);box-shadow:0 1px 0 #0d7d69}
+.ad-close[disabled]{background:#37455f;color:#8fa0bd;box-shadow:0 4px 0 #26314a;cursor:not-allowed}
+@media (prefers-reduced-motion:reduce){.ad-ship{animation:none}.boost-chip.on{animation:none}}

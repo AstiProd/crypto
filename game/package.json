@@ -1,0 +1,27 @@
+{
+  "name": "astro-base-tycoon",
+  "version": "1.0.0",
+  "description": "Jeu de gestion isométrique spatial — un astronaute développe sa base minière.",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "node tools/build-www.js && node tools/build-artifact.js",
+    "icons": "node tools/make-icons.js",
+    "sync": "npm run build && npx cap sync",
+    "android": "npm run sync && npx cap open android",
+    "ios": "npm run sync && npx cap open ios",
+    "serve": "npx http-server . -p 8080 -c-1"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/app": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/ios": "^8.0.0",
+    "@capacitor/splash-screen": "^8.0.0",
+    "@capacitor/status-bar": "^8.0.0",
+    "@capacitor-community/admob": "^8.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.0.0"
+  }
+}

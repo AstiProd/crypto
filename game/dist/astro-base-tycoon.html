@@ -124,10 +124,10 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block}
 @keyframes toastOut{to{opacity:0;transform:translateY(-10px)}}
 .hint{
   position:absolute;left:50%;transform:translateX(-50%);
-  bottom:calc(88px + var(--safe-bottom));
+  bottom:calc(148px + var(--safe-bottom));
   background:rgba(11,20,38,.86);border:2px solid rgba(122,184,255,.3);
   padding:8px 18px;border-radius:999px;font-size:14px;font-weight:700;color:#dbe9ff;
-  opacity:0;transition:opacity .2s;white-space:nowrap;max-width:86vw;overflow:hidden;text-overflow:ellipsis;
+  opacity:0;transition:opacity .2s;white-space:nowrap;max-width:80vw;overflow:hidden;text-overflow:ellipsis;
 }
 .hint.on{opacity:1}
 
@@ -139,10 +139,12 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block}
   width:min(560px,94vw);max-height:86vh;overflow:auto;
   background:linear-gradient(180deg,var(--panel-2),var(--panel));
   border:2px solid var(--line);border-radius:var(--radius);
-  padding:18px;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;
+  padding:18px;opacity:0;pointer-events:none;visibility:hidden;
+  transition:opacity .18s,transform .18s,visibility 0s linear .18s;
   box-shadow:0 24px 60px rgba(0,0,0,.6),inset 0 2px 0 rgba(255,255,255,.06);
 }
-.panel.on{opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1)}
+.panel.on{opacity:1;pointer-events:auto;visibility:visible;transform:translate(-50%,-50%) scale(1);
+  transition:opacity .18s,transform .18s,visibility 0s}
 .panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
 .panel h2{margin:0;font-size:23px;letter-spacing:.3px}
 .panel-sub{margin:0 0 14px;color:var(--muted);font-size:14px;line-height:1.45}
@@ -214,6 +216,91 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block}
   .panel,.overlay,.carry-fill,.hint,.joystick{transition:none}
 }
 
+/* ================= PUBLICITÉ ================= */
+/* bouton « vidéo récompensée » */
+.rw-btn{
+  position:relative;display:flex;align-items:center;gap:9px;
+  padding:10px 15px 10px 12px;border-radius:16px;cursor:pointer;
+  background:linear-gradient(180deg,#ffd76b,#f2a726);
+  border:2px solid rgba(255,236,190,.75);color:#3a2400;
+  font-family:inherit;font-size:14.5px;font-weight:800;
+  box-shadow:0 5px 0 #a86b00;
+}
+.rw-btn:active{transform:translateY(3px);box-shadow:0 2px 0 #a86b00}
+.rw-btn[disabled]{
+  background:linear-gradient(180deg,#4b5b78,#37455f);border-color:rgba(160,190,230,.25);
+  color:#9fb0c9;box-shadow:0 5px 0 #26314a;cursor:not-allowed
+}
+.rw-btn .play{
+  width:24px;height:24px;border-radius:50%;display:grid;place-items:center;
+  background:rgba(58,36,0,.82);color:#ffd76b;font-size:11px;flex:0 0 auto
+}
+.rw-btn[disabled] .play{background:rgba(10,18,36,.5);color:#9fb0c9}
+.rw-btn small{display:block;font-size:11px;font-weight:700;opacity:.75}
+
+#btnBoost{position:absolute;right:12px;bottom:calc(78px + var(--safe-bottom));pointer-events:auto}
+.panel .rw-btn{pointer-events:auto}
+
+/* pastille de bonus actif */
+.boost-chip{
+  position:absolute;top:calc(62px + var(--safe-top));left:172px;
+  display:none;align-items:center;gap:6px;height:26px;padding:0 12px;
+  border-radius:999px;background:linear-gradient(180deg,#ffd76b,#f2a726);
+  color:#3a2400;font-size:13px;font-weight:900;
+  box-shadow:0 4px 0 rgba(0,0,0,.3);
+  font-variant-numeric:tabular-nums;
+}
+.boost-chip.on{display:flex;animation:chipIn .25s ease}
+@keyframes chipIn{from{transform:scale(.8);opacity:0}to{transform:none;opacity:1}}
+
+/* lecteur de démonstration */
+.ad-overlay{
+  position:fixed;inset:0;z-index:40;display:none;
+  align-items:center;justify-content:center;padding:18px;
+  background:rgba(2,5,14,.92);backdrop-filter:blur(3px);
+}
+.ad-overlay.on{display:flex}
+.ad-frame{
+  width:min(420px,94vw);border-radius:20px;overflow:hidden;
+  background:linear-gradient(180deg,#16213d,#0d1526);
+  border:2px solid rgba(140,190,255,.28);
+  box-shadow:0 30px 70px rgba(0,0,0,.65);
+  position:relative;
+}
+.ad-tag{
+  position:absolute;top:10px;left:10px;z-index:2;
+  background:rgba(0,0,0,.55);color:#dfe9ff;border:1px solid rgba(255,255,255,.2);
+  font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  padding:3px 8px;border-radius:6px;
+}
+.ad-art{
+  height:190px;position:relative;overflow:hidden;
+  background:radial-gradient(circle at 70% 25%,#3a2a6b,#0f1430 70%);
+}
+.ad-planet{
+  position:absolute;left:-40px;bottom:-70px;width:210px;height:210px;border-radius:50%;
+  background:radial-gradient(circle at 35% 30%,#7ce0ff,#2b6bb8 60%,#16305e);
+  box-shadow:0 0 60px rgba(80,180,255,.35);
+}
+.ad-ship{
+  position:absolute;right:44px;top:46px;font-size:44px;
+  animation:adFloat 2.4s ease-in-out infinite;
+}
+@keyframes adFloat{0%,100%{transform:translateY(0) rotate(-8deg)}50%{transform:translateY(-14px) rotate(4deg)}}
+.ad-body{padding:14px 16px 4px}
+.ad-title{font-size:18px}
+.ad-sub{margin:4px 0 0;color:var(--muted);font-size:13px;line-height:1.45}
+.ad-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px 16px}
+.ad-count{color:#8affe4;font-size:13px;font-weight:800;font-variant-numeric:tabular-nums}
+.ad-close{
+  border:none;border-radius:12px;padding:10px 18px;cursor:pointer;
+  font-family:inherit;font-weight:800;font-size:14px;color:#04231f;
+  background:linear-gradient(180deg,#6cf0d4,#22c0a4);box-shadow:0 4px 0 #0d7d69;
+}
+.ad-close:active{transform:translateY(3px);box-shadow:0 1px 0 #0d7d69}
+.ad-close[disabled]{background:#37455f;color:#8fa0bd;box-shadow:0 4px 0 #26314a;cursor:not-allowed}
+@media (prefers-reduced-motion:reduce){.ad-ship{animation:none}.boost-chip.on{animation:none}}
+
 </style>
 <div id="app">
   <canvas id="game"></canvas>
@@ -224,6 +311,7 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block}
       <div class="credits" id="creditsBox">
         <span class="chip">◈</span><span id="creditsVal">0</span>
       </div>
+      <div class="boost-chip" id="boostChip">×2 <span id="boostTime">0:00</span></div>
       <div class="top-right">
         <button class="icon-btn" id="btnSound" title="Son">🔊</button>
         <button class="icon-btn" id="btnMenu" title="Menu">⋯</button>
@@ -239,6 +327,10 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block}
       <button class="action-btn" id="btnShop"><span class="ico">🛰️</span><span>Foreuses</span></button>
       <button class="action-btn" id="btnUpgrades"><span class="ico">⚡</span><span>Améliorations</span></button>
     </div>
+
+    <button class="rw-btn" id="btnBoost" type="button">
+      <span class="play">▶</span><span>Boost ×2<small id="boostLabel">60 s de recettes doublées</small></span>
+    </button>
 
     <div id="joystick" class="joystick">
       <div class="joy-base"></div>
@@ -299,11 +391,343 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block}
     <div class="panel-head"><h2>Rapport de mission</h2></div>
     <div class="welcome">
       <p class="big" id="offlineText"></p>
+      <button class="rw-btn" id="btnOfflineX2" type="button" style="width:100%;justify-content:center;margin-bottom:10px">
+        <span class="play">▶</span><span>Doubler la récompense</span>
+      </button>
       <button class="cta" data-close>Récupérer</button>
     </div>
   </div>
 </div>
 <script>
+/* =========================================================================
+   CONFIGURATION PUBLICITAIRE
+   Les identifiants ci-dessous sont les unités de TEST officielles Google.
+   Remplace-les par tes vrais identifiants AdMob avant la mise en production
+   et passe `testMode` à false. (Diffuser de vraies pubs sur tes propres
+   appareils de test = risque de suspension du compte AdMob.)
+   ========================================================================= */
+window.ADS_CONFIG = {
+  network: 'admob',
+  testMode: true,                 // true = unités de test Google
+
+  // Identifiants d'application (AdMob → Applications → ID d'application)
+  appId: {
+    android: 'ca-app-pub-3940256099942544~3347511713',
+    ios:     'ca-app-pub-3940256099942544~1458002511'
+  },
+
+  // Blocs d'annonces
+  units: {
+    rewarded: {
+      android: 'ca-app-pub-3940256099942544/5224354917',
+      ios:     'ca-app-pub-3940256099942544/1712485313'
+    },
+    interstitial: {
+      android: 'ca-app-pub-3940256099942544/1033173712',
+      ios:     'ca-app-pub-3940256099942544/4411468910'
+    },
+    banner: {
+      android: 'ca-app-pub-3940256099942544/6300978111',
+      ios:     'ca-app-pub-3940256099942544/2934735716'
+    }
+  },
+
+  // Bannière désactivée : elle mangerait l'interface de jeu.
+  banner: { enabled: false, position: 'BOTTOM_CENTER' },
+
+  // Emplacements récompensés : délai minimum entre deux visionnages (s)
+  placements: {
+    boost:     { cooldown: 180, rewardSeconds: 60, multiplier: 2 },
+    offline:   { cooldown: 0,   multiplier: 2 },
+    freeDrill: { cooldown: 300 }
+  },
+
+  interstitial: {
+    minInterval: 180,      // s entre deux interstitiels
+    warmupSeconds: 120,    // aucune pub avant 2 min de jeu
+    minUnlocks: 2          // ni avant le 2ᵉ socle débloqué
+  },
+
+  // Respect de la vie privée
+  consent: {
+    useUmp: true,          // formulaire Google UMP (RGPD / CCPA)
+    attPrompt: true        // App Tracking Transparency (iOS 14.5+)
+  }
+};
+
+/* =========================================================================
+   RÉGIE PUBLICITAIRE
+   Une seule API pour le jeu : Ads.showRewarded(...) / Ads.maybeInterstitial(...)
+   - sur mobile (Capacitor + @capacitor-community/admob) : vraies pubs AdMob
+   - dans un navigateur : lecteur de démonstration intégré, même API
+   Le jeu n'a jamais à savoir sur quelle plateforme il tourne.
+   ========================================================================= */
+(function () {
+'use strict';
+
+var CFG = window.ADS_CONFIG || {};
+var now = function () { return Date.now() / 1000; };
+
+/* ------------------------------------------------------------------ */
+/*  Fournisseur 1 — AdMob natif (iOS / Android via Capacitor)          */
+/* ------------------------------------------------------------------ */
+function AdMobProvider(plugin, platform) {
+  this.p = plugin;
+  this.platform = platform;
+  this.interstitialReady = false;
+}
+AdMobProvider.prototype.unit = function (kind) {
+  var u = (CFG.units && CFG.units[kind]) || {};
+  return u[this.platform] || u.android || '';
+};
+AdMobProvider.prototype.init = function () {
+  var self = this;
+  return this.p.initialize({
+    initializeForTesting: !!CFG.testMode,
+    testingDevices: []
+  }).then(function () {
+    return self.consent();
+  }).then(function () {
+    return self.tracking();
+  }).then(function () {
+    self.preloadInterstitial();
+    return true;
+  });
+};
+/* Formulaire de consentement Google UMP (RGPD, CCPA) */
+AdMobProvider.prototype.consent = function () {
+  var self = this;
+  if (!CFG.consent || !CFG.consent.useUmp || !this.p.requestConsentInfo) return Promise.resolve();
+  return this.p.requestConsentInfo({ debugGeography: CFG.testMode ? 1 : 0 })
+    .then(function (info) {
+      if (info && info.isConsentFormAvailable && info.status === 'REQUIRED') {
+        return self.p.showConsentForm();
+      }
+    })
+    .catch(function () { /* le consentement ne doit jamais bloquer le jeu */ });
+};
+/* App Tracking Transparency (iOS 14.5+) — demandé après le consentement */
+AdMobProvider.prototype.tracking = function () {
+  if (this.platform !== 'ios' || !CFG.consent || !CFG.consent.attPrompt) return Promise.resolve();
+  if (!this.p.requestTrackingAuthorization) return Promise.resolve();
+  return this.p.requestTrackingAuthorization().catch(function () {});
+};
+AdMobProvider.prototype.preloadInterstitial = function () {
+  var self = this;
+  if (!this.p.prepareInterstitial) return;
+  this.p.prepareInterstitial({ adId: this.unit('interstitial'), isTesting: !!CFG.testMode })
+    .then(function () { self.interstitialReady = true; })
+    .catch(function () { self.interstitialReady = false; });
+};
+AdMobProvider.prototype.rewarded = function () {
+  var self = this;
+  return this.p.prepareRewardVideoAd({ adId: this.unit('rewarded'), isTesting: !!CFG.testMode })
+    .then(function () { return self.p.showRewardVideoAd(); })
+    .then(function (item) { return !!item; })       // item null = pub fermée avant la fin
+    .catch(function () { return false; });
+};
+AdMobProvider.prototype.interstitial = function () {
+  var self = this;
+  var run = this.interstitialReady
+    ? Promise.resolve()
+    : this.p.prepareInterstitial({ adId: this.unit('interstitial'), isTesting: !!CFG.testMode });
+  return run
+    .then(function () { return self.p.showInterstitial(); })
+    .then(function () { self.interstitialReady = false; self.preloadInterstitial(); return true; })
+    .catch(function () { self.interstitialReady = false; return false; });
+};
+AdMobProvider.prototype.banner = function (show) {
+  if (!this.p.showBanner) return Promise.resolve();
+  if (!show) return this.p.removeBanner().catch(function () {});
+  return this.p.showBanner({
+    adId: this.unit('banner'),
+    adSize: 'ADAPTIVE_BANNER',
+    position: (CFG.banner && CFG.banner.position) || 'BOTTOM_CENTER',
+    isTesting: !!CFG.testMode
+  }).catch(function () {});
+};
+AdMobProvider.prototype.privacyOptions = function () {
+  if (this.p.showConsentForm) return this.p.showConsentForm().catch(function () {});
+  return Promise.resolve();
+};
+
+/* ------------------------------------------------------------------ */
+/*  Fournisseur 2 — lecteur de démonstration (navigateur)              */
+/* ------------------------------------------------------------------ */
+function DemoProvider() { this.el = null; }
+DemoProvider.prototype.init = function () { return Promise.resolve(true); };
+DemoProvider.prototype.build = function () {
+  if (this.el) return this.el;
+  var wrap = document.createElement('div');
+  wrap.className = 'ad-overlay';
+  wrap.innerHTML =
+    '<div class="ad-frame">' +
+      '<span class="ad-tag">Emplacement publicitaire · démo</span>' +
+      '<div class="ad-art"><div class="ad-planet"></div><div class="ad-ship">🚀</div></div>' +
+      '<div class="ad-body">' +
+        '<b class="ad-title"></b>' +
+        '<p class="ad-sub">Ici s\'afficherait une vidéo AdMob sur mobile.</p>' +
+      '</div>' +
+      '<div class="ad-foot"><span class="ad-count"></span>' +
+      '<button class="ad-close" type="button" disabled>Fermer</button></div>' +
+    '</div>';
+  document.body.appendChild(wrap);
+  this.el = wrap;
+  return wrap;
+};
+DemoProvider.prototype.play = function (seconds, title, closable) {
+  var self = this;
+  var el = this.build();
+  var count = el.querySelector('.ad-count');
+  var close = el.querySelector('.ad-close');
+  el.querySelector('.ad-title').textContent = title;
+  el.classList.add('on');
+  close.disabled = !closable;
+  close.textContent = closable ? 'Passer' : 'Fermer';
+
+  return new Promise(function (resolve) {
+    var left = seconds, done = false, timer;
+    function finish(ok) {
+      if (done) return;
+      done = true;
+      clearInterval(timer);
+      el.classList.remove('on');
+      close.onclick = null;
+      resolve(ok);
+    }
+    count.textContent = 'Récompense dans ' + left + ' s';
+    timer = setInterval(function () {
+      left--;
+      if (left > 0) {
+        count.textContent = 'Récompense dans ' + left + ' s';
+      } else {
+        clearInterval(timer);
+        count.textContent = 'Récompense débloquée ✓';
+        close.disabled = false;
+        close.textContent = 'Fermer';
+        close.onclick = function () { finish(true); };
+      }
+    }, 1000);
+    close.onclick = function () { finish(false); };
+  });
+};
+DemoProvider.prototype.rewarded = function () {
+  return this.play(5, 'Vidéo récompensée', true);
+};
+DemoProvider.prototype.interstitial = function () {
+  return this.play(3, 'Interstitiel', false).then(function () { return true; });
+};
+DemoProvider.prototype.banner = function () { return Promise.resolve(); };
+DemoProvider.prototype.privacyOptions = function () {
+  alert('Sur mobile, le formulaire de consentement Google UMP s\'ouvrirait ici.');
+  return Promise.resolve();
+};
+
+/* ------------------------------------------------------------------ */
+/*  Gestionnaire                                                       */
+/* ------------------------------------------------------------------ */
+var Ads = {
+  provider: null,
+  native: false,
+  ready: false,
+  removed: false,           // achat « supprimer les pubs »
+  busy: false,
+  cooldowns: {},            // emplacement -> horodatage du dernier visionnage
+  lastInterstitial: 0,
+  sessionStart: now(),
+  unlocks: 0,
+
+  init: function () {
+    var self = this;
+    var cap = window.Capacitor;
+    var plugin = cap && cap.Plugins && cap.Plugins.AdMob;
+    var isNative = !!(cap && cap.isNativePlatform && cap.isNativePlatform() && plugin);
+
+    if (isNative) {
+      this.native = true;
+      var platform = cap.getPlatform ? cap.getPlatform() : 'android';
+      this.provider = new AdMobProvider(plugin, platform);
+    } else {
+      this.provider = new DemoProvider();
+    }
+    return this.provider.init()
+      .then(function () {
+        self.ready = true;
+        if (!self.removed && CFG.banner && CFG.banner.enabled) self.provider.banner(true);
+        return true;
+      })
+      .catch(function () { self.ready = false; return false; });
+  },
+
+  cfg: function (placement) {
+    return (CFG.placements && CFG.placements[placement]) || {};
+  },
+
+  /* Combien de secondes avant que l'emplacement soit à nouveau disponible */
+  waitFor: function (placement) {
+    var cd = this.cfg(placement).cooldown || 0;
+    if (!cd) return 0;
+    var last = this.cooldowns[placement] || 0;
+    return Math.max(0, Math.ceil(last + cd - now()));
+  },
+  canRewarded: function (placement) {
+    return this.ready && !this.busy && this.waitFor(placement) === 0;
+  },
+
+  /* Vidéo récompensée : résout true si la récompense est acquise */
+  showRewarded: function (placement) {
+    var self = this;
+    if (this.busy) return Promise.resolve(false);
+    if (!this.ready) return Promise.resolve(false);
+    if (this.waitFor(placement) > 0) return Promise.resolve(false);
+    this.busy = true;
+    return this.provider.rewarded()
+      .then(function (ok) {
+        self.busy = false;
+        if (ok) self.cooldowns[placement] = now();
+        return ok;
+      })
+      .catch(function () { self.busy = false; return false; });
+  },
+
+  /* Interstitiel : affiché seulement si toutes les règles le permettent */
+  maybeInterstitial: function (trigger) {
+    var self = this;
+    var I = CFG.interstitial || {};
+    if (this.removed || !this.ready || this.busy) return Promise.resolve(false);
+    if (now() - this.sessionStart < (I.warmupSeconds || 0)) return Promise.resolve(false);
+    if (now() - this.lastInterstitial < (I.minInterval || 0)) return Promise.resolve(false);
+    if (this.unlocks < (I.minUnlocks || 0)) return Promise.resolve(false);
+    this.busy = true;
+    this.lastInterstitial = now();
+    return this.provider.interstitial()
+      .then(function (ok) { self.busy = false; return ok; })
+      .catch(function () { self.busy = false; return false; });
+  },
+
+  setRemoveAds: function (v) {
+    this.removed = !!v;
+    if (this.provider && this.provider.banner) this.provider.banner(!this.removed && CFG.banner && CFG.banner.enabled);
+  },
+  privacyOptions: function () {
+    return this.provider ? this.provider.privacyOptions() : Promise.resolve();
+  },
+
+  /* Sauvegarde */
+  serialize: function () {
+    return { removed: this.removed, cooldowns: this.cooldowns, unlocks: this.unlocks };
+  },
+  restore: function (d) {
+    if (!d) return;
+    this.removed = !!d.removed;
+    this.cooldowns = d.cooldowns || {};
+    this.unlocks = d.unlocks || 0;
+  }
+};
+
+window.Ads = Ads;
+})();
+
 /* =========================================================================
    ASTRO BASE TYCOON
    Jeu de gestion isométrique : extraire, raffiner, encaisser, fusionner.
@@ -367,6 +791,10 @@ var UPGRADES = [
   { id: 'drones',   icon: '🤖', name: 'Drones ouvriers',   desc: 'Un assistant automatique de plus', max: 4, cost: function (l) { return Math.round(1500 * Math.pow(3.4, l)); } }
 ];
 
+function adCfg(placement) {
+  var C = window.ADS_CONFIG || {};
+  return (C.placements && C.placements[placement]) || {};
+}
 function playerSpeed() { return 3.5 + 0.55 * S.up.speed; }
 function playerCap() { return 8 + 5 * S.up.capacity; }
 function refinePeriod() { return 0.55 * Math.pow(0.82, S.up.refinery); }
@@ -421,7 +849,9 @@ var S = {
   bestTier: 0,
   playTime: 0,
   lastSeen: Date.now(),
-  started: false
+  started: false,
+  boost: 0,              // secondes restantes de recettes doublées (pub récompensée)
+  pendingOffline: 0      // montant hors-ligne, doublable une fois par pub
 };
 
 var FX = { floaters: [], parts: [], rings: [] };
@@ -487,6 +917,8 @@ function save() {
       totalMined: S.totalMined,
       bestTier: S.bestTier,
       playTime: S.playTime,
+      boost: S.boost,
+      ads: window.Ads ? window.Ads.serialize() : null,
       lastSeen: Date.now(),
       pads: S.pads.map(function (p) {
         return { u: p.unlocked, paid: p.paid, t: p.drill ? p.drill.tier : -1 };
@@ -511,6 +943,8 @@ function load() {
     S.totalMined = d.totalMined || 0;
     S.bestTier = d.bestTier || 0;
     S.playTime = d.playTime || 0;
+    S.boost = d.boost || 0;
+    if (window.Ads) window.Ads.restore(d.ads);
     S.lastSeen = d.lastSeen || Date.now();
     for (var i = 0; i < S.pads.length && i < d.pads.length; i++) {
       var sp = d.pads[i], p = S.pads[i];
@@ -817,11 +1251,14 @@ function updateCarrier(a, dt, cfg) {
   if (a.carryType === 'chip' && a.carry.length &&
       dist2(a.x, a.y, TERMINAL_POS.x, TERMINAL_POS.y) < 1.6 * 1.6 && a.actTimer <= 0) {
     var c = a.carry.pop();
-    S.credits += c.value; S.totalEarned += c.value;
+    var mult = S.boost > 0 ? (adCfg('boost').multiplier || 2) : 1;
+    var gain = c.value * mult;
+    S.credits += gain; S.totalEarned += gain;
     a.actTimer = cfg.rate * 0.8;
     if (!a.carry.length) a.carryType = null;
-    floater(TERMINAL_POS.x, TERMINAL_POS.y, 1.4, '+' + fmt(c.value), '#8affe4');
-    burst(TERMINAL_POS.x, TERMINAL_POS.y, 1.1, '#48e2c6', 5, 0.6);
+    floater(TERMINAL_POS.x, TERMINAL_POS.y, 1.4, '+' + fmt(gain) + (mult > 1 ? ' ×2' : ''),
+            mult > 1 ? '#ffd76b' : '#8affe4');
+    burst(TERMINAL_POS.x, TERMINAL_POS.y, 1.1, mult > 1 ? '#ffca3a' : '#48e2c6', 5, 0.6);
     if (cfg.sound) Audio_.cash();
     creditsPulse();
     return;
@@ -856,6 +1293,7 @@ function updateUnlock(dt) {
     floater(standing.x, standing.y, 1.6, 'Socle actif !', '#7ab8ff');
     toast('Nouveau socle en ligne 🛰️', 'good');
     save();
+    if (window.Ads) { window.Ads.unlocks++; window.Ads.maybeInterstitial('socle_debloque'); }
   }
 }
 
@@ -971,6 +1409,7 @@ function updateHint() {
 
 function update(dt) {
   S.playTime += dt;
+  if (S.boost > 0) S.boost = Math.max(0, S.boost - dt);
   updatePads(dt);
   updatePlayer(dt);
   updateDrones(dt);
@@ -1820,6 +2259,11 @@ function drawAstronaut(a, t) {
   var swing = moving ? Math.sin(a.walk * 2.2) : Math.sin(a.bob * 0.5) * 0.15;
   var bob = moving ? Math.abs(Math.sin(a.walk * 2.2)) * 3 * k : Math.sin(a.bob * 0.5) * 1.5 * k;
   shadow(a.x, a.y, 0.44, 0.36);
+  if (S.boost > 0) {                                  // aura du bonus ×2
+    var pulse = 0.5 + 0.3 * Math.sin(t * 4);
+    discStroke(a.x, a.y, 0.02, 0.52 + 0.05 * Math.sin(t * 4), rgba('#ffca3a', pulse), 3.5);
+    disc(a.x, a.y, 0.015, 0.46, rgba('#ffca3a', 0.12));
+  }
 
   ctx.save();
   ctx.translate(s.x, s.y - bob);
@@ -2154,6 +2598,18 @@ function renderShop() {
       : '<span style="color:#ffc9cf">Aucun socle libre — va en débloquer un</span>') + '</div></div>' +
     '<button class="buy" id="buyDrill" ' + (canPay && free ? '' : 'disabled') + '>' + fmt(cost) + ' ◈</button>' +
     '</div>';
+  var adWait = window.Ads ? window.Ads.waitFor('freeDrill') : 0;
+  var adOk = window.Ads && window.Ads.canRewarded('freeDrill') && free > 0;
+  html += '<div class="row">' +
+    '<div class="emoji">🎁</div>' +
+    '<div class="txt"><b>Foreuse offerte</b>' +
+    '<small>Regarde une courte vidéo, repars avec une ' + TIERS[0].name + '</small>' +
+    '<div class="val">' + (free
+      ? (adWait ? 'Disponible dans ' + mmss(adWait) : '<span class="to">Disponible</span>')
+      : '<span style="color:#ffc9cf">Aucun socle libre</span>') + '</div></div>' +
+    '<button class="rw-btn" id="buyDrillAd"' + (adOk ? '' : ' disabled') + '>' +
+    '<span class="play">▶</span><span>Gratuit</span></button>' +
+    '</div>';
   html += '<p class="panel-sub" style="margin-top:14px">Catalogue des rangs — chaque fusion double presque la valeur du cristal.</p>';
   for (var i = 0; i <= Math.min(MAX_TIER, S.bestTier + 1); i++) {
     var T = TIERS[i], owned = S.pads.some(function (p) { return p.drill && p.drill.tier === i; });
@@ -2180,6 +2636,32 @@ function renderShop() {
     toast('Foreuse installée 🛠️', 'good');
     save(); renderShop();
   };
+
+  var adBtn = el('buyDrillAd');
+  if (adBtn) adBtn.onclick = function () {
+    if (!window.Ads || !window.Ads.canRewarded('freeDrill')) return;
+    var target = null;
+    for (var i = 0; i < S.pads.length; i++) if (S.pads[i].unlocked && !S.pads[i].drill) { target = S.pads[i]; break; }
+    if (!target) { Audio_.error(); toast('Aucun socle libre', 'bad'); return; }
+    adBtn.disabled = true;
+    window.Ads.showRewarded('freeDrill').then(function (ok) {
+      if (!ok) { toast('Vidéo interrompue — pas de récompense', 'bad'); renderShop(); return; }
+      target.drill = { tier: 0, timer: 0, pulse: 1, spin: 0 };
+      target.pop = 1;
+      Audio_.buy();
+      burst(target.x, target.y, 0.6, TIERS[0].glow, 20, 1.2);
+      floater(target.x, target.y, 1.5, 'Mk-I offerte !', '#ffd76b');
+      toast('Foreuse offerte installée 🎁', 'good');
+      save(); renderShop();
+    });
+  };
+}
+
+/* mm:ss pour les compteurs publicitaires */
+function mmss(sec) {
+  sec = Math.max(0, Math.ceil(sec));
+  var m = Math.floor(sec / 60), r = sec % 60;
+  return m + ':' + (r < 10 ? '0' : '') + r;
 }
 
 /* ---------- améliorations ---------- */
@@ -2237,10 +2719,23 @@ function renderMenu() {
     '</div>' +
     '<button class="menu-btn" id="mHow">📖 Comment jouer</button>' +
     '<button class="menu-btn" id="mSound">' + (Audio_.on ? '🔊 Son : activé' : '🔇 Son : coupé') + '</button>' +
+    '<button class="menu-btn" id="mNoAds">' + (window.Ads && window.Ads.removed
+        ? '✅ Pubs supprimées — merci !'
+        : '🚫 Supprimer les pubs (achat intégré)') + '</button>' +
+    '<button class="menu-btn" id="mPrivacy">🔒 Confidentialité des publicités</button>' +
     '<button class="menu-btn danger" id="mReset">♻️ Nouvelle partie</button>' +
     '<p class="panel-sub" style="text-align:center;margin:6px 0 0">Astro Base Tycoon v1.0 — sauvegarde automatique</p>';
   el('mHow').onclick = function () { openPanel('panelWelcome'); };
   el('mSound').onclick = function () { toggleSound(); renderMenu(); };
+  el('mNoAds').onclick = function () {
+    if (!window.Ads) return;
+    if (window.Ads.removed) { toast('Les interstitiels sont déjà désactivés', 'good'); return; }
+    // Brancher ici l'achat intégré (voir store/CHECKLIST.md) ; en démo on l'active directement.
+    window.Ads.setRemoveAds(true);
+    toast('Interstitiels désactivés ✨', 'good');
+    save(); renderMenu();
+  };
+  el('mPrivacy').onclick = function () { if (window.Ads) window.Ads.privacyOptions(); };
   el('mReset').onclick = function () {
     if (!confirm('Effacer la base et recommencer à zéro ?')) return;
     try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
@@ -2262,7 +2757,62 @@ el('btnMenu').onclick = function () { renderMenu(); openPanel('panelMenu'); };
 el('btnSound').onclick = function () { Audio_.init(); toggleSound(); };
 el('btnPlay').onclick = function () { closeAll(); S.started = true; Audio_.init(); };
 
+var boostBtn = el('btnBoost'), boostChip = el('boostChip'), boostTime = el('boostTime'), boostLabel = el('boostLabel');
+var lastBoostTxt = '', lastBtnTxt = '';
+
+boostBtn.onclick = function () {
+  if (!window.Ads || !window.Ads.canRewarded('boost') || S.boost > 0) return;
+  boostBtn.disabled = true;
+  window.Ads.showRewarded('boost').then(function (ok) {
+    if (!ok) { toast('Vidéo interrompue — pas de bonus', 'bad'); return; }
+    S.boost = adCfg('boost').rewardSeconds || 60;
+    Audio_.merge();
+    toast('Recettes doublées pendant ' + Math.round(S.boost) + ' s !', 'good');
+    burst(S.player.x, S.player.y, 0.8, '#ffca3a', 22, 1.2);
+    save();
+  });
+};
+
+el('btnOfflineX2').onclick = function () {
+  var btn = el('btnOfflineX2');
+  if (!window.Ads || !S.pendingOffline) return;
+  btn.disabled = true;
+  window.Ads.showRewarded('offline').then(function (ok) {
+    if (!ok) { toast('Vidéo interrompue', 'bad'); btn.disabled = false; return; }
+    var bonus = S.pendingOffline;
+    S.credits += bonus; S.totalEarned += bonus;
+    S.pendingOffline = 0;
+    creditsPulse(); Audio_.cash();
+    el('offlineText').innerHTML = 'Récompense doublée !<br><b style="font-size:26px;color:#ffd76b">+' + fmt(bonus) + ' ◈</b>';
+    btn.style.display = 'none';
+    save();
+  });
+};
+
+function updateAdsHUD() {
+  // pastille de bonus actif
+  if (S.boost > 0) {
+    boostChip.classList.add('on');
+    var txt = mmss(S.boost);
+    if (txt !== lastBoostTxt) { boostTime.textContent = txt; lastBoostTxt = txt; }
+  } else if (boostChip.classList.contains('on')) {
+    boostChip.classList.remove('on');
+  }
+  // bouton de vidéo récompensée
+  var label, disabled;
+  if (!window.Ads || !window.Ads.ready) { label = 'Pubs indisponibles'; disabled = true; }
+  else if (S.boost > 0) { label = 'Bonus en cours…'; disabled = true; }
+  else {
+    var wait = window.Ads.waitFor('boost');
+    if (wait > 0) { label = 'Encore ' + mmss(wait); disabled = true; }
+    else { label = (adCfg('boost').rewardSeconds || 60) + ' s de recettes doublées'; disabled = false; }
+  }
+  if (label !== lastBtnTxt) { boostLabel.textContent = label; lastBtnTxt = label; }
+  if (boostBtn.disabled !== disabled && !(window.Ads && window.Ads.busy)) boostBtn.disabled = disabled;
+}
+
 function updateHUD(dt) {
+  updateAdsHUD();
   if (S.credits !== lastCredits) {
     lastCredits = S.credits;
     creditsVal.textContent = fmt(S.credits);
@@ -2291,7 +2841,8 @@ function frame(now) {
   last = now;
   var t = now / 1000;
 
-  if (S.started) {
+  var adBusy = !!(window.Ads && window.Ads.busy);
+  if (S.started && !adBusy) {
     update(dt);
     saveTimer += dt;
     if (saveTimer > 8) { saveTimer = 0; save(); }
@@ -2310,6 +2861,7 @@ function frame(now) {
 /* ------------------------------------------------------------------ */
 function boot() {
   buildDecor();
+  if (window.Ads) window.Ads.init();
   initWorld();
   var had = load();
   try {
@@ -2323,7 +2875,10 @@ function boot() {
     S.started = true;
     if (gain > 0) {
       S.credits += gain; S.totalEarned += gain;
+      S.pendingOffline = gain;
       el('offlineText').innerHTML = 'Pendant ton absence, la base a produit<br><b style="font-size:26px;color:#8affe4">' + fmt(gain) + ' ◈</b>';
+      el('btnOfflineX2').style.display = '';
+      el('btnOfflineX2').disabled = false;
       openPanel('panelOffline');
     }
   } else {
