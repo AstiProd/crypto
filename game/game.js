@@ -1,0 +1,2045 @@
+/* =========================================================================
+   ASTRO BASE TYCOON
+   Jeu de gestion isométrique : extraire, raffiner, encaisser, fusionner.
+   Rendu 100% Canvas 2D, aucune dépendance, aucun asset externe.
+   ========================================================================= */
+(function () {
+'use strict';
+
+/* ------------------------------------------------------------------ */
+/*  1. CONSTANTES & OUTILS                                             */
+/* ------------------------------------------------------------------ */
+
+var TILE_W = 88;          // largeur d'une tuile projetée
+var TILE_H = 44;          // hauteur d'une tuile projetée (iso 2:1)
+var H_UNIT = 46;          // pixels par unité de hauteur
+var SAVE_KEY = 'astro-base-tycoon-v1';
+var MAX_TIER = 9;         // index max (rang 10)
+var PAD_COUNT = 10;
+
+var clamp = function (v, a, b) { return v < a ? a : v > b ? b : v; };
+var lerp = function (a, b, t) { return a + (b - a) * t; };
+var dist2 = function (ax, ay, bx, by) { var dx = ax - bx, dy = ay - by; return dx * dx + dy * dy; };
+var rnd = function (a, b) { return a + Math.random() * (b - a); };
+var pick = function (arr) { return arr[(Math.random() * arr.length) | 0]; };
+
+/* Nombres façon idle-game : 1.2K, 45.8M, 3.1B ... */
+function fmt(n) {
+  n = Math.floor(n);
+  if (n < 1000) return '' + n;
+  var units = ['K', 'M', 'B', 'T', 'Aa', 'Ab', 'Ac'];
+  var i = -1;
+  while (n >= 1000 && i < units.length - 1) { n /= 1000; i++; }
+  return (n < 10 ? n.toFixed(2) : n < 100 ? n.toFixed(1) : Math.floor(n)) + units[i];
+}
+var ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
+
+/* Rangs de foreuses : couleurs coque + couleur du cristal produit */
+var TIERS = [
+  { name: 'Mk-I',    body: '#c2ccd9', dark: '#8b96a6', crystal: '#9fe8ff', glow: '#6fd6ff' },
+  { name: 'Mk-II',   body: '#cf9a6a', dark: '#9a6d47', crystal: '#ffd07a', glow: '#ffb84d' },
+  { name: 'Mk-III',  body: '#8fd6a4', dark: '#5da372', crystal: '#7dffb4', glow: '#3ff08d' },
+  { name: 'Mk-IV',   body: '#7fbdf0', dark: '#4c85b8', crystal: '#8ad4ff', glow: '#39a9ff' },
+  { name: 'Mk-V',    body: '#ffd15c', dark: '#c99a24', crystal: '#ffe27a', glow: '#ffc21f' },
+  { name: 'Mk-VI',   body: '#b48cff', dark: '#7b58c4', crystal: '#d5b0ff', glow: '#a86bff' },
+  { name: 'Mk-VII',  body: '#ff8fb0', dark: '#c4607f', crystal: '#ffa8c8', glow: '#ff5f92' },
+  { name: 'Mk-VIII', body: '#5fe8d8', dark: '#28ab9d', crystal: '#8ffff0', glow: '#25e6cf' },
+  { name: 'Mk-IX',   body: '#ff9d5c', dark: '#c46a29', crystal: '#ffc48a', glow: '#ff7a1f' },
+  { name: 'Mk-X',    body: '#f2f6ff', dark: '#b8c6e8', crystal: '#ffffff', glow: '#ffffff' }
+];
+
+/* Équilibrage */
+function drillValue(t) { return Math.round(5 * Math.pow(2.15, t)); }      // valeur d'un cristal
+function drillPeriod(t) { return 4.6 * Math.pow(0.93, t); }               // secondes entre deux cristaux
+function padCost(i) { return Math.round(60 * Math.pow(2.4, i - 1)); }     // prix du socle n°i
+function shopCost(bought) { return Math.round(80 * Math.pow(1.75, bought)); }
+
+var UPGRADES = [
+  { id: 'speed',    icon: '🥾', name: 'Bottes propulsées', desc: 'Déplacement plus rapide',        max: 6, cost: function (l) { return Math.round(220 * Math.pow(2.5, l)); } },
+  { id: 'capacity', icon: '🎒', name: 'Sac dorsal',        desc: 'Capacité de transport',          max: 6, cost: function (l) { return Math.round(300 * Math.pow(2.6, l)); } },
+  { id: 'refinery', icon: '🏭', name: 'Raffinerie',        desc: 'Traitement des cristaux',        max: 6, cost: function (l) { return Math.round(400 * Math.pow(2.7, l)); } },
+  { id: 'drones',   icon: '🤖', name: 'Drones ouvriers',   desc: 'Un assistant automatique de plus', max: 4, cost: function (l) { return Math.round(1500 * Math.pow(3.4, l)); } }
+];
+
+function playerSpeed() { return 3.5 + 0.55 * S.up.speed; }
+function playerCap() { return 8 + 5 * S.up.capacity; }
+function refinePeriod() { return 0.55 * Math.pow(0.82, S.up.refinery); }
+function droneCount() { return S.up.drones; }
+function droneSpeed() { return 2.8 + 0.25 * S.up.speed; }
+
+/* ------------------------------------------------------------------ */
+/*  2. AUDIO (synthèse WebAudio, zéro fichier)                         */
+/* ------------------------------------------------------------------ */
+var Audio_ = {
+  ctx: null, on: true,
+  init: function () {
+    if (this.ctx) return;
+    var C = window.AudioContext || window.webkitAudioContext;
+    if (C) { this.ctx = new C(); }
+  },
+  blip: function (freq, dur, type, vol) {
+    if (!this.on || !this.ctx) return;
+    if (this.ctx.state === 'suspended') this.ctx.resume();
+    var t = this.ctx.currentTime;
+    var o = this.ctx.createOscillator(), g = this.ctx.createGain();
+    o.type = type || 'sine'; o.frequency.setValueAtTime(freq, t);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol || 0.16, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + (dur || 0.12));
+    o.connect(g); g.connect(this.ctx.destination);
+    o.start(t); o.stop(t + (dur || 0.12) + 0.03);
+  },
+  pickup: function (i) { this.blip(620 + (i % 8) * 45, 0.08, 'triangle', 0.10); },
+  drop:   function (i) { this.blip(360 + (i % 6) * 30, 0.07, 'sine', 0.09); },
+  cash:   function () { this.blip(880, 0.09, 'square', 0.07); var s = this; setTimeout(function () { s.blip(1320, 0.12, 'square', 0.05); }, 60); },
+  merge:  function () { var s = this; [523, 659, 784, 1046].forEach(function (f, i) { setTimeout(function () { s.blip(f, 0.16, 'triangle', 0.12); }, i * 65); }); },
+  unlock: function () { var s = this; [392, 523, 659].forEach(function (f, i) { setTimeout(function () { s.blip(f, 0.22, 'sawtooth', 0.08); }, i * 90); }); },
+  buy:    function () { this.blip(700, 0.12, 'triangle', 0.12); },
+  error:  function () { this.blip(150, 0.16, 'sawtooth', 0.09); }
+};
+
+/* ------------------------------------------------------------------ */
+/*  3. ÉTAT DU JEU                                                     */
+/* ------------------------------------------------------------------ */
+var S = {
+  credits: 0,
+  pads: [],
+  ores: [],
+  player: null,
+  drones: [],
+  refinery: null,
+  up: { speed: 0, capacity: 0, refinery: 0, drones: 0 },
+  bought: 0,
+  totalEarned: 0,
+  totalMined: 0,
+  bestTier: 0,
+  playTime: 0,
+  lastSeen: Date.now(),
+  started: false
+};
+
+var FX = { floaters: [], parts: [], rings: [] };
+var cam = { x: 7.5, y: 7.5, zoom: 1 };
+
+/* Position des socles : deux rangées dans la zone minière */
+function padPos(i) {
+  var col = i % 5, row = (i / 5) | 0;
+  return { x: 2.4 + col * 2.85, y: 1.7 + row * 2.75 };
+}
+
+var REFINERY_POS = { x: 13.9, y: 8.35 };
+var REFINERY_IN  = { x: 14.9, y: 9.85 };
+var REFINERY_OUT = { x: 12.75, y: 9.8 };
+var TERMINAL_POS = { x: 7.2, y: 10.7 };
+var ROCKET_POS   = { x: 2.2, y: 9.9 };
+var DOME_POS     = { x: 15.4, y: 3.0 };
+
+function newPlayer() {
+  return {
+    x: 7.5, y: 8.2, vx: 0, vy: 0, face: 1, walk: 0, bob: 0,
+    carry: [], carryType: null, actTimer: 0
+  };
+}
+function newDrone(i) {
+  return {
+    x: 6 + i * 0.8, y: 9.4, vx: 0, vy: 0, face: 1, bob: Math.random() * 6,
+    carry: [], carryType: null, actTimer: 0, task: null, target: null
+  };
+}
+
+function initWorld() {
+  S.pads = [];
+  for (var i = 0; i < PAD_COUNT; i++) {
+    var p = padPos(i);
+    S.pads.push({
+      i: i, x: p.x, y: p.y,
+      unlocked: i === 0,
+      cost: i === 0 ? 0 : padCost(i),
+      paid: 0,
+      drill: i === 0 ? { tier: 0, timer: 0, pulse: 0, spin: 0 } : null,
+      pop: 0
+    });
+  }
+  S.ores = [];
+  S.player = newPlayer();
+  S.drones = [];
+  S.refinery = { queue: [], tray: [], timer: 0, pulse: 0, spin: 0 };
+  cam.x = S.player.x; cam.y = S.player.y;
+}
+
+/* ------------------------------------------------------------------ */
+/*  4. SAUVEGARDE                                                      */
+/* ------------------------------------------------------------------ */
+function save() {
+  try {
+    var data = {
+      v: 1,
+      credits: S.credits,
+      up: S.up,
+      bought: S.bought,
+      totalEarned: S.totalEarned,
+      totalMined: S.totalMined,
+      bestTier: S.bestTier,
+      playTime: S.playTime,
+      lastSeen: Date.now(),
+      pads: S.pads.map(function (p) {
+        return { u: p.unlocked, paid: p.paid, t: p.drill ? p.drill.tier : -1 };
+      })
+    };
+    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+  } catch (e) { /* stockage indisponible : on joue sans sauvegarde */ }
+}
+
+function load() {
+  var raw = null;
+  try { raw = localStorage.getItem(SAVE_KEY); } catch (e) { return false; }
+  if (!raw) return false;
+  try {
+    var d = JSON.parse(raw);
+    if (!d || !d.pads) return false;
+    S.credits = d.credits || 0;
+    S.up = { speed: 0, capacity: 0, refinery: 0, drones: 0 };
+    if (d.up) for (var k in S.up) if (typeof d.up[k] === 'number') S.up[k] = d.up[k];
+    S.bought = d.bought || 0;
+    S.totalEarned = d.totalEarned || 0;
+    S.totalMined = d.totalMined || 0;
+    S.bestTier = d.bestTier || 0;
+    S.playTime = d.playTime || 0;
+    S.lastSeen = d.lastSeen || Date.now();
+    for (var i = 0; i < S.pads.length && i < d.pads.length; i++) {
+      var sp = d.pads[i], p = S.pads[i];
+      p.unlocked = !!sp.u;
+      p.paid = sp.paid || 0;
+      p.drill = (sp.t >= 0) ? { tier: clamp(sp.t, 0, MAX_TIER), timer: 0, pulse: 0, spin: 0 } : null;
+    }
+    return true;
+  } catch (e) { return false; }
+}
+
+/* Gains hors-ligne : la base tourne au ralenti quand on est parti */
+function offlineGains() {
+  var dt = (Date.now() - S.lastSeen) / 1000;
+  if (dt < 120) return 0;
+  dt = Math.min(dt, 4 * 3600);          // 4 h max
+  var perSec = 0;
+  S.pads.forEach(function (p) {
+    if (p.drill) perSec += drillValue(p.drill.tier) / drillPeriod(p.drill.tier);
+  });
+  return Math.floor(perSec * dt * 0.35); // rendement réduit sans astronaute
+}
+
+/* ------------------------------------------------------------------ */
+/*  5. EFFETS                                                          */
+/* ------------------------------------------------------------------ */
+function floater(x, y, z, text, color) {
+  FX.floaters.push({ x: x, y: y, z: z, t: 0, life: 1.05, text: text, color: color || '#fff' });
+}
+function burst(x, y, z, color, n, power) {
+  n = n || 10; power = power || 1;
+  for (var i = 0; i < n; i++) {
+    var a = Math.random() * Math.PI * 2, s = rnd(0.6, 2.2) * power;
+    FX.parts.push({
+      x: x, y: y, z: z, vx: Math.cos(a) * s * 0.5, vy: Math.sin(a) * s * 0.5,
+      vz: rnd(1.2, 3.4) * power, t: 0, life: rnd(0.5, 0.95), color: color, size: rnd(2, 5)
+    });
+  }
+}
+function ring(x, y, z, color) { FX.rings.push({ x: x, y: y, z: z, t: 0, life: 0.6, color: color }); }
+
+function updateFX(dt) {
+  var i;
+  for (i = FX.floaters.length - 1; i >= 0; i--) {
+    var f = FX.floaters[i]; f.t += dt; f.z += dt * 1.05;
+    if (f.t >= f.life) FX.floaters.splice(i, 1);
+  }
+  for (i = FX.parts.length - 1; i >= 0; i--) {
+    var p = FX.parts[i]; p.t += dt;
+    p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt; p.vz -= 7 * dt;
+    if (p.z < 0) { p.z = 0; p.vz *= -0.35; p.vx *= 0.6; p.vy *= 0.6; }
+    if (p.t >= p.life) FX.parts.splice(i, 1);
+  }
+  for (i = FX.rings.length - 1; i >= 0; i--) {
+    var r = FX.rings[i]; r.t += dt;
+    if (r.t >= r.life) FX.rings.splice(i, 1);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  6. ENTRÉES (clavier, joystick flottant, glisser-fusionner)         */
+/* ------------------------------------------------------------------ */
+var keys = {};
+var joy = { active: false, id: null, ox: 0, oy: 0, dx: 0, dy: 0 };
+var drag = { active: false, id: null, pad: null, sx: 0, sy: 0, moved: false };
+
+var canvas = document.getElementById('game');
+var ctx = canvas.getContext('2d');
+var W = 0, H = 0, DPR = 1;
+
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = Math.floor(W * DPR); canvas.height = Math.floor(H * DPR);
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  cam.zoom = clamp(Math.min(W / 560, H / 780), 0.72, 1.30);
+  if (DECOR.stars.length) buildBackground();
+}
+window.addEventListener('resize', resize);
+
+window.addEventListener('keydown', function (e) {
+  keys[e.key.toLowerCase()] = true;
+  if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].indexOf(e.key.toLowerCase()) >= 0) e.preventDefault();
+});
+window.addEventListener('keyup', function (e) { keys[e.key.toLowerCase()] = false; });
+window.addEventListener('blur', function () { keys = {}; });
+
+function keyVec() {
+  var x = 0, y = 0;
+  if (keys['z'] || keys['w'] || keys['arrowup']) { x -= 1; y -= 1; }
+  if (keys['s'] || keys['arrowdown']) { x += 1; y += 1; }
+  if (keys['q'] || keys['a'] || keys['arrowleft']) { x -= 1; y += 1; }
+  if (keys['d'] || keys['arrowright']) { x += 1; y -= 1; }
+  return { x: x, y: y };
+}
+
+/* --- pointeur --- */
+var joyEl = document.getElementById('joystick');
+var knobEl = document.getElementById('joyKnob');
+
+function padAtScreen(sx, sy) {
+  var best = null, bestD = 1e9;
+  for (var i = 0; i < S.pads.length; i++) {
+    var p = S.pads[i];
+    if (!p.drill) continue;
+    var s = toScreen(p.x, p.y, 0.55);
+    var dx = sx - s.x, dy = sy - s.y;
+    var d = dx * dx + dy * dy;
+    if (Math.abs(dx) < 48 * cam.zoom && dy < 34 * cam.zoom && dy > -72 * cam.zoom && d < bestD) { bestD = d; best = p; }
+  }
+  return best;
+}
+function padSocketAtScreen(sx, sy) {
+  var best = null, bestD = 1e9;
+  for (var i = 0; i < S.pads.length; i++) {
+    var p = S.pads[i];
+    var s = toScreen(p.x, p.y, 0);
+    var d = dist2(sx, sy, s.x, s.y);
+    if (d < (58 * cam.zoom) * (58 * cam.zoom) && d < bestD) { bestD = d; best = p; }
+  }
+  return best;
+}
+
+canvas.addEventListener('pointerdown', function (e) {
+  Audio_.init();
+  if (!S.started) return;
+  var hit = padAtScreen(e.clientX, e.clientY);
+  if (hit) {
+    drag.active = true; drag.id = e.pointerId; drag.pad = hit;
+    drag.sx = e.clientX; drag.sy = e.clientY; drag.moved = false;
+    canvas.setPointerCapture(e.pointerId);
+    return;
+  }
+  var socket = padSocketAtScreen(e.clientX, e.clientY);
+  if (socket && !socket.unlocked) {
+    hint('Va te poser sur ce socle pour l\'acheter — ' + fmt(socket.cost) + ' ◈', 2.2);
+  }
+  joy.active = true; joy.id = e.pointerId; joy.ox = e.clientX; joy.oy = e.clientY;
+  joy.dx = 0; joy.dy = 0;
+  joyEl.style.left = (e.clientX - 66) + 'px';
+  joyEl.style.top = (e.clientY - 66) + 'px';
+  joyEl.style.bottom = 'auto';
+  joyEl.classList.add('on');
+  knobEl.style.transform = 'translate(0,0)';
+  canvas.setPointerCapture(e.pointerId);
+});
+
+canvas.addEventListener('pointermove', function (e) {
+  if (drag.active && e.pointerId === drag.id) {
+    drag.sx = e.clientX; drag.sy = e.clientY; drag.moved = true;
+    return;
+  }
+  if (joy.active && e.pointerId === joy.id) {
+    var dx = e.clientX - joy.ox, dy = e.clientY - joy.oy;
+    var len = Math.hypot(dx, dy), max = 56;
+    if (len > max) { dx = dx / len * max; dy = dy / len * max; len = max; }
+    joy.dx = dx / max; joy.dy = dy / max;
+    knobEl.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+  }
+});
+
+function endPointer(e) {
+  if (drag.active && e.pointerId === drag.id) {
+    resolveDrag(e.clientX, e.clientY);
+    drag.active = false; drag.pad = null;
+  }
+  if (joy.active && e.pointerId === joy.id) {
+    joy.active = false; joy.dx = 0; joy.dy = 0;
+    joyEl.classList.remove('on');
+  }
+}
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+
+/* Dépose la foreuse glissée : fusion, déplacement ou échange */
+function resolveDrag(sx, sy) {
+  var from = drag.pad;
+  if (!from || !from.drill) return;
+  var to = padSocketAtScreen(sx, sy);
+  if (!to || to === from) return;
+  if (!to.unlocked) { Audio_.error(); hint('Ce socle est encore verrouillé', 1.6); return; }
+
+  if (!to.drill) {                                   // déplacement
+    to.drill = from.drill; from.drill = null; to.pop = 1;
+    Audio_.drop(0);
+  } else if (to.drill.tier === from.drill.tier) {    // fusion
+    if (to.drill.tier >= MAX_TIER) { Audio_.error(); hint('Rang maximum atteint !', 1.6); return; }
+    to.drill = { tier: to.drill.tier + 1, timer: 0, pulse: 1, spin: from.drill.spin };
+    from.drill = null; to.pop = 1;
+    S.bestTier = Math.max(S.bestTier, to.drill.tier);
+    Audio_.merge();
+    burst(to.x, to.y, 0.9, TIERS[to.drill.tier].glow, 26, 1.4);
+    ring(to.x, to.y, 0.15, TIERS[to.drill.tier].glow);
+    floater(to.x, to.y, 1.5, TIERS[to.drill.tier].name + ' !', TIERS[to.drill.tier].glow);
+    toast('Fusion réussie : ' + TIERS[to.drill.tier].name, 'good');
+  } else {                                           // échange
+    var tmp = to.drill; to.drill = from.drill; from.drill = tmp;
+    to.pop = 1; from.pop = 1; Audio_.drop(2);
+  }
+  save();
+}
+
+/* ------------------------------------------------------------------ */
+/*  7. SIMULATION                                                      */
+/* ------------------------------------------------------------------ */
+var WORLD_W = 17, WORLD_H = 13;
+var ORE_PER_PAD = 8, QUEUE_MAX = 40, TRAY_MAX = 26;
+
+function colliders() {
+  var c = [
+    { x: REFINERY_POS.x, y: REFINERY_POS.y, r: 1.45 },
+    { x: TERMINAL_POS.x, y: TERMINAL_POS.y, r: 0.95 },
+    { x: ROCKET_POS.x, y: ROCKET_POS.y, r: 1.05 },
+    { x: DOME_POS.x, y: DOME_POS.y, r: 1.35 }
+  ];
+  for (var i = 0; i < S.pads.length; i++) {
+    var p = S.pads[i];
+    if (p.drill) c.push({ x: p.x, y: p.y, r: 0.72 });
+  }
+  return c;
+}
+
+function moveActor(a, dx, dy, speed, dt) {
+  var len = Math.hypot(dx, dy);
+  if (len > 0.001) {
+    dx /= len; dy /= len;
+    a.x += dx * speed * dt;
+    a.y += dy * speed * dt;
+    a.walk = (a.walk || 0) + speed * dt * 2.4;
+    // orientation écran : +x va à droite, +y va à gauche
+    var sdx = (dx - dy);
+    if (Math.abs(sdx) > 0.05) a.face = sdx > 0 ? 1 : -1;
+    a.moving = true;
+  } else { a.moving = false; }
+
+  a.x = clamp(a.x, 0.7, WORLD_W - 0.7);
+  a.y = clamp(a.y, 0.7, WORLD_H - 0.7);
+
+  var cs = colliders();
+  for (var i = 0; i < cs.length; i++) {
+    var c = cs[i], ddx = a.x - c.x, ddy = a.y - c.y;
+    var d = Math.hypot(ddx, ddy);
+    if (d < c.r && d > 0.0001) {
+      a.x = c.x + ddx / d * c.r;
+      a.y = c.y + ddy / d * c.r;
+    } else if (d <= 0.0001) { a.x += c.r; }
+  }
+}
+
+function carryValue(a) {
+  var v = 0; for (var i = 0; i < a.carry.length; i++) v += a.carry[i].value; return v;
+}
+
+/* Ramassage / dépôt communs à l'astronaute et aux drones */
+function updateCarrier(a, dt, cfg) {
+  a.actTimer -= dt;
+  var cap = cfg.cap, R = 1.25 * 1.25;
+
+  /* 1. ramasser les cristaux au sol */
+  if ((!a.carryType || a.carryType === 'ore') && a.carry.length < cap) {
+    var best = -1, bestD = R;
+    for (var i = 0; i < S.ores.length; i++) {
+      var o = S.ores[i];
+      var d = dist2(a.x, a.y, o.x, o.y);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    if (best >= 0 && a.actTimer <= 0) {
+      var ore = S.ores.splice(best, 1)[0];
+      a.carry.push({ value: ore.value, tier: ore.tier }); a.carryType = 'ore';
+      a.actTimer = cfg.rate;
+      S.totalMined++;
+      if (cfg.sound) Audio_.pickup(a.carry.length);
+      burst(ore.x, ore.y, 0.35, TIERS[ore.tier].glow, 4, 0.5);
+      return;
+    }
+  }
+
+  /* 2. verser les cristaux dans la raffinerie */
+  if (a.carryType === 'ore' && a.carry.length &&
+      dist2(a.x, a.y, REFINERY_IN.x, REFINERY_IN.y) < 1.5 * 1.5 &&
+      S.refinery.queue.length < QUEUE_MAX && a.actTimer <= 0) {
+    var it = a.carry.pop();
+    S.refinery.queue.push(it);
+    S.refinery.pulse = 1;
+    a.actTimer = cfg.rate;
+    if (!a.carry.length) a.carryType = null;
+    if (cfg.sound) Audio_.drop(a.carry.length);
+    return;
+  }
+
+  /* 3. prendre les puces de crédit sur le plateau de sortie */
+  if ((!a.carryType || a.carryType === 'chip') && a.carry.length < cap &&
+      S.refinery.tray.length && dist2(a.x, a.y, REFINERY_OUT.x, REFINERY_OUT.y) < 1.5 * 1.5 &&
+      a.actTimer <= 0) {
+    var chip = S.refinery.tray.pop();
+    a.carry.push(chip); a.carryType = 'chip';
+    a.actTimer = cfg.rate;
+    if (cfg.sound) Audio_.pickup(a.carry.length);
+    return;
+  }
+
+  /* 4. encaisser au terminal */
+  if (a.carryType === 'chip' && a.carry.length &&
+      dist2(a.x, a.y, TERMINAL_POS.x, TERMINAL_POS.y) < 1.6 * 1.6 && a.actTimer <= 0) {
+    var c = a.carry.pop();
+    S.credits += c.value; S.totalEarned += c.value;
+    a.actTimer = cfg.rate * 0.8;
+    if (!a.carry.length) a.carryType = null;
+    floater(TERMINAL_POS.x, TERMINAL_POS.y, 1.4, '+' + fmt(c.value), '#8affe4');
+    burst(TERMINAL_POS.x, TERMINAL_POS.y, 1.1, '#48e2c6', 5, 0.6);
+    if (cfg.sound) Audio_.cash();
+    creditsPulse();
+    return;
+  }
+}
+
+/* Achat progressif d'un socle : il suffit de rester dessus */
+function updateUnlock(dt) {
+  var p, i, standing = null;
+  for (i = 0; i < S.pads.length; i++) {
+    p = S.pads[i];
+    if (p.unlocked) continue;
+    if (dist2(S.player.x, S.player.y, p.x, p.y) < 0.95 * 0.95) { standing = p; break; }
+  }
+  if (!standing) return;
+  if (S.credits <= 0) { hint('Il te faut des crédits : ' + fmt(standing.cost - standing.paid) + ' ◈ restants', 1.2); return; }
+
+  var rate = Math.max(standing.cost / 3.2, 30);
+  var amount = Math.min(rate * dt, S.credits, standing.cost - standing.paid);
+  S.credits -= amount;
+  standing.paid += amount;
+  if (Math.random() < dt * 14) burst(standing.x, standing.y, 0.15, '#48e2c6', 2, 0.5);
+
+  if (standing.paid >= standing.cost - 0.5) {
+    standing.unlocked = true;
+    standing.paid = standing.cost;
+    standing.drill = { tier: 0, timer: 0, pulse: 1, spin: 0 };
+    standing.pop = 1;
+    Audio_.unlock();
+    burst(standing.x, standing.y, 0.5, '#7ab8ff', 30, 1.5);
+    ring(standing.x, standing.y, 0.1, '#7ab8ff');
+    floater(standing.x, standing.y, 1.6, 'Socle actif !', '#7ab8ff');
+    toast('Nouveau socle en ligne 🛰️', 'good');
+    save();
+  }
+}
+
+function oresOfPad(i) {
+  var n = 0;
+  for (var k = 0; k < S.ores.length; k++) if (S.ores[k].pad === i) n++;
+  return n;
+}
+
+function updatePads(dt) {
+  for (var i = 0; i < S.pads.length; i++) {
+    var p = S.pads[i];
+    if (p.pop > 0) p.pop = Math.max(0, p.pop - dt * 2.2);
+    if (!p.drill) continue;
+    var d = p.drill;
+    d.spin += dt * (2.4 + d.tier * 0.35);
+    if (d.pulse > 0) d.pulse = Math.max(0, d.pulse - dt * 2.4);
+    if (oresOfPad(i) >= ORE_PER_PAD) continue;
+    d.timer += dt;
+    var period = drillPeriod(d.tier);
+    while (d.timer >= period && oresOfPad(i) < ORE_PER_PAD) {
+      d.timer -= period;
+      d.pulse = 1;
+      var ox = p.x + rnd(-0.45, 0.45);
+      var oy = p.y + 1.15 + rnd(-0.25, 0.45);
+      S.ores.push({
+        x: ox, y: oy, pad: i, tier: d.tier, value: drillValue(d.tier),
+        bob: Math.random() * 6.28, t: 0, spawn: 0
+      });
+      burst(p.x, p.y + 0.6, 0.25, TIERS[d.tier].glow, 5, 0.6);
+    }
+  }
+  for (var k = 0; k < S.ores.length; k++) { S.ores[k].t += dt; if (S.ores[k].spawn < 1) S.ores[k].spawn = Math.min(1, S.ores[k].spawn + dt * 3.5); }
+}
+
+function updateRefinery(dt) {
+  var r = S.refinery;
+  if (r.pulse > 0) r.pulse = Math.max(0, r.pulse - dt * 1.8);
+  if (r.queue.length) r.spin += dt * 6;
+  r.timer += dt;
+  var period = refinePeriod();
+  while (r.queue.length && r.tray.length < TRAY_MAX && r.timer >= period) {
+    r.timer -= period;
+    var ore = r.queue.shift();
+    r.tray.push({ value: ore.value, tier: ore.tier });
+    r.pulse = 1;
+    burst(REFINERY_OUT.x, REFINERY_OUT.y, 0.75, '#48e2c6', 4, 0.5);
+  }
+  if (r.timer > period) r.timer = period;
+}
+
+/* IA des drones : les pairs minent, les impairs convoient les crédits */
+function updateDrones(dt) {
+  var want = droneCount();
+  while (S.drones.length < want) S.drones.push(newDrone(S.drones.length));
+  while (S.drones.length > want) S.drones.pop();
+
+  for (var i = 0; i < S.drones.length; i++) {
+    var d = S.drones[i];
+    var isMiner = (i % 2 === 0);
+    var cap = 5 + S.up.capacity;
+    var tx = null, ty = null;
+
+    if (isMiner) {
+      if (d.carry.length >= cap || (d.carry.length && !S.ores.length)) {
+        tx = REFINERY_IN.x; ty = REFINERY_IN.y;
+      } else if (S.ores.length) {
+        var best = null, bd = 1e9;
+        for (var k = 0; k < S.ores.length; k++) {
+          var o = S.ores[k], dd = dist2(d.x, d.y, o.x, o.y);
+          if (dd < bd) { bd = dd; best = o; }
+        }
+        if (best) { tx = best.x; ty = best.y; }
+      } else { tx = REFINERY_IN.x - 1.6; ty = REFINERY_IN.y - 0.6; }
+    } else {
+      if (d.carry.length >= cap || (d.carry.length && !S.refinery.tray.length)) {
+        tx = TERMINAL_POS.x; ty = TERMINAL_POS.y - 0.1;
+      } else if (S.refinery.tray.length) {
+        tx = REFINERY_OUT.x; ty = REFINERY_OUT.y;
+      } else { tx = TERMINAL_POS.x + 1.5; ty = TERMINAL_POS.y - 0.4; }
+    }
+
+    var dx = tx - d.x, dy = ty - d.y;
+    var len = Math.hypot(dx, dy);
+    if (len > 0.35) moveActor(d, dx, dy, droneSpeed(), dt);
+    else d.moving = false;
+    d.bob += dt * 3;
+    updateCarrier(d, dt, { cap: cap, rate: 0.11, sound: false });
+  }
+}
+
+function updatePlayer(dt) {
+  var kv = keyVec();
+  var dx = kv.x, dy = kv.y;
+  if (joy.active && (Math.abs(joy.dx) > 0.12 || Math.abs(joy.dy) > 0.12)) {
+    // joystick écran -> monde isométrique
+    dx += (joy.dx / (TILE_W / 2) + joy.dy / (TILE_H / 2)) * 30;
+    dy += (-joy.dx / (TILE_W / 2) + joy.dy / (TILE_H / 2)) * 30;
+  }
+  moveActor(S.player, dx, dy, playerSpeed(), dt);
+  S.player.bob += dt * (S.player.moving ? 9 : 2.4);
+  updateCarrier(S.player, dt, { cap: playerCap(), rate: 0.07, sound: true });
+}
+
+function updateHint() {
+  var p = S.player, msg = '';
+  if (p.carryType === 'ore' && p.carry.length >= playerCap()) msg = 'Sac plein → raffinerie 🏭';
+  else if (p.carryType === 'chip' && p.carry.length) msg = 'Encaisse au terminal ◈';
+  else if (S.refinery.tray.length && !p.carry.length) msg = 'Puces prêtes à la raffinerie';
+  else if (!S.ores.length && !S.refinery.queue.length && !S.refinery.tray.length && !p.carry.length) msg = 'Fusionne deux foreuses identiques';
+  if (msg) hint(msg, 0.6);
+}
+
+function update(dt) {
+  S.playTime += dt;
+  updatePads(dt);
+  updatePlayer(dt);
+  updateDrones(dt);
+  updateRefinery(dt);
+  updateUnlock(dt);
+  updateFX(dt);
+  updateHint();
+
+  // caméra douce
+  var tx = S.player.x, ty = S.player.y;
+  cam.x = lerp(cam.x, tx, 1 - Math.pow(0.0016, dt));
+  cam.y = lerp(cam.y, ty, 1 - Math.pow(0.0016, dt));
+}
+
+/* ------------------------------------------------------------------ */
+/*  8. RENDU — primitives isométriques                                 */
+/* ------------------------------------------------------------------ */
+function toScreen(x, y, z) {
+  var px = (x - y) * (TILE_W / 2);
+  var py = (x + y) * (TILE_H / 2) - (z || 0) * H_UNIT;
+  var cx = (cam.x - cam.y) * (TILE_W / 2);
+  var cy = (cam.x + cam.y) * (TILE_H / 2);
+  return { x: (px - cx) * cam.zoom + W / 2, y: (py - cy) * cam.zoom + H * 0.56 };
+}
+
+function hex2rgb(h) {
+  h = h.replace('#', '');
+  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+  var n = parseInt(h, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+var shadeCache = {};
+function sh(hex, f) {
+  var key = hex + '|' + f;
+  if (shadeCache[key]) return shadeCache[key];
+  var c = hex2rgb(hex);
+  var r = clamp(Math.round(c[0] * f), 0, 255),
+      g = clamp(Math.round(c[1] * f), 0, 255),
+      b = clamp(Math.round(c[2] * f), 0, 255);
+  var out = 'rgb(' + r + ',' + g + ',' + b + ')';
+  shadeCache[key] = out; return out;
+}
+function rgba(hex, a) { var c = hex2rgb(hex); return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')'; }
+
+function poly(pts, fill, stroke) {
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.closePath();
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1 * cam.zoom; ctx.stroke(); }
+}
+
+/* Cuboïde isométrique : x,y = centre au sol ; w,d = emprise ; h = hauteur */
+function box(x, y, z, w, d, h, color, opts) {
+  opts = opts || {};
+  var x0 = x - w / 2, x1 = x + w / 2, y0 = y - d / 2, y1 = y + d / 2, z1 = z + h;
+  var A = toScreen(x0, y0, z1), B = toScreen(x1, y0, z1), C = toScreen(x1, y1, z1), D = toScreen(x0, y1, z1);
+  var Bb = toScreen(x1, y0, z), Cb = toScreen(x1, y1, z), Db = toScreen(x0, y1, z);
+  poly([B, C, Cb, Bb], opts.right || sh(color, 0.74));
+  poly([D, C, Cb, Db], opts.left || sh(color, 0.55));
+  poly([A, B, C, D], opts.top || color);
+  if (opts.edge) {
+    ctx.strokeStyle = rgba(opts.edge, opts.edgeA || 0.5); ctx.lineWidth = 1.2 * cam.zoom;
+    ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.lineTo(C.x, C.y); ctx.lineTo(D.x, D.y); ctx.closePath(); ctx.stroke();
+  }
+  return { top: A, cx: (A.x + C.x) / 2, cy: (A.y + C.y) / 2 };
+}
+
+/* Disque isométrique (ellipse) au sol ou en l'air */
+function disc(x, y, z, r, color, squash) {
+  var s = toScreen(x, y, z);
+  ctx.beginPath();
+  ctx.ellipse(s.x, s.y, r * (TILE_W / 2) * cam.zoom, r * (TILE_H / 2) * cam.zoom * (squash || 1), 0, 0, 6.2832);
+  ctx.fillStyle = color; ctx.fill();
+}
+function discStroke(x, y, z, r, color, lw, squash) {
+  var s = toScreen(x, y, z);
+  ctx.beginPath();
+  ctx.ellipse(s.x, s.y, r * (TILE_W / 2) * cam.zoom, r * (TILE_H / 2) * cam.zoom * (squash || 1), 0, 0, 6.2832);
+  ctx.strokeStyle = color; ctx.lineWidth = (lw || 2) * cam.zoom; ctx.stroke();
+}
+/* Cylindre isométrique */
+function cyl(x, y, z, r, h, color) {
+  var b = toScreen(x, y, z), t = toScreen(x, y, z + h);
+  var rx = r * (TILE_W / 2) * cam.zoom, ry = r * (TILE_H / 2) * cam.zoom;
+  ctx.beginPath();
+  ctx.moveTo(b.x - rx, b.y);
+  ctx.lineTo(t.x - rx, t.y);
+  ctx.ellipse(t.x, t.y, rx, ry, 0, Math.PI, 0, true);
+  ctx.lineTo(b.x + rx, b.y);
+  ctx.ellipse(b.x, b.y, rx, ry, 0, 0, Math.PI, false);
+  ctx.closePath();
+  var grd = ctx.createLinearGradient(b.x - rx, 0, b.x + rx, 0);
+  grd.addColorStop(0, sh(color, 0.5)); grd.addColorStop(0.45, sh(color, 0.92)); grd.addColorStop(1, sh(color, 0.66));
+  ctx.fillStyle = grd; ctx.fill();
+  ctx.beginPath(); ctx.ellipse(t.x, t.y, rx, ry, 0, 0, 6.2832);
+  ctx.fillStyle = sh(color, 1.12); ctx.fill();
+}
+function shadow(x, y, r, a) {
+  disc(x, y, 0.005, r, 'rgba(2,6,16,' + (a || 0.32) + ')');
+}
+function ballGrad(sx, sy, r, c1, c2) {
+  var g = ctx.createRadialGradient(sx - r * 0.35, sy - r * 0.4, r * 0.1, sx, sy, r);
+  g.addColorStop(0, c1); g.addColorStop(1, c2);
+  return g;
+}
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+/* File de rendu triée en profondeur */
+var Q = [];
+function push(depth, fn) { Q.push({ d: depth, f: fn }); }
+function flushQ() {
+  Q.sort(function (a, b) { return a.d - b.d; });
+  for (var i = 0; i < Q.length; i++) Q[i].f();
+  Q.length = 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  9. DÉCOR PROCÉDURAL (généré une seule fois)                        */
+/* ------------------------------------------------------------------ */
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    var t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+var DECOR = { stars: [], craters: [], rocks: [], plants: [], seams: [], lights: [] };
+
+function buildDecor() {
+  var r = mulberry32(20870424);
+  var i;
+  for (i = 0; i < 220; i++) {
+    DECOR.stars.push({ x: r(), y: r(), s: r() * 1.6 + 0.4, a: r() * 0.7 + 0.25, l: (r() * 3 | 0) + 1, tw: r() * 6.28 });
+  }
+  for (i = 0; i < 16; i++) {
+    DECOR.craters.push({ x: r() * WORLD_W, y: r() * WORLD_H, r: r() * 0.5 + 0.25 });
+  }
+  for (i = 0; i < 26; i++) {
+    var rx = r() * WORLD_W, ry = r() * WORLD_H;
+    DECOR.rocks.push({ x: rx, y: ry, s: r() * 0.34 + 0.16, k: r() });
+  }
+  for (i = 0; i < 22; i++) {
+    DECOR.plants.push({ x: r() * WORLD_W, y: r() * WORLD_H, s: r() * 0.4 + 0.5, k: r(), ph: r() * 6.28 });
+  }
+  for (i = 0; i < 30; i++) {
+    DECOR.lights.push({ x: r() * WORLD_W, y: r() * WORLD_H, ph: r() * 6.28 });
+  }
+  // on écarte le décor des zones de jeu
+  function clear(list, px, py, rad) {
+    for (var k = list.length - 1; k >= 0; k--) {
+      if (dist2(list[k].x, list[k].y, px, py) < rad * rad) list.splice(k, 1);
+    }
+  }
+  ['craters', 'rocks', 'plants', 'lights'].forEach(function (key) {
+    for (var p = 0; p < PAD_COUNT; p++) { var pp = padPos(p); clear(DECOR[key], pp.x, pp.y, 1.9); }
+    clear(DECOR[key], REFINERY_POS.x, REFINERY_POS.y, 2.6);
+    clear(DECOR[key], TERMINAL_POS.x, TERMINAL_POS.y, 2.2);
+    clear(DECOR[key], ROCKET_POS.x, ROCKET_POS.y, 2.2);
+    clear(DECOR[key], DOME_POS.x, DOME_POS.y, 2.4);
+  });
+}
+
+/* ---------- fond spatial (dégradés + étoiles pré-rendus) ---------- */
+var bgCv = document.createElement('canvas');
+function buildBackground() {
+  bgCv.width = Math.max(1, Math.floor(W * DPR));
+  bgCv.height = Math.max(1, Math.floor(H * DPR));
+  var g2 = bgCv.getContext('2d');
+  g2.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  var g = g2.createLinearGradient(0, 0, W * 0.3, H);
+  g.addColorStop(0, '#0a0c22'); g.addColorStop(0.45, '#141537'); g.addColorStop(1, '#26123c');
+  g2.fillStyle = g; g2.fillRect(0, 0, W, H);
+
+  var n1 = g2.createRadialGradient(W * 0.75, H * 0.18, 10, W * 0.75, H * 0.18, Math.max(W, H) * 0.55);
+  n1.addColorStop(0, 'rgba(120,60,190,.30)'); n1.addColorStop(1, 'rgba(120,60,190,0)');
+  g2.fillStyle = n1; g2.fillRect(0, 0, W, H);
+  var n2 = g2.createRadialGradient(W * 0.12, H * 0.82, 10, W * 0.12, H * 0.82, Math.max(W, H) * 0.5);
+  n2.addColorStop(0, 'rgba(30,140,190,.24)'); n2.addColorStop(1, 'rgba(30,140,190,0)');
+  g2.fillStyle = n2; g2.fillRect(0, 0, W, H);
+
+  g2.fillStyle = '#ffffff';
+  for (var i = 0; i < DECOR.stars.length; i++) {
+    var st = DECOR.stars[i];
+    g2.globalAlpha = st.a;
+    g2.fillRect(st.x * W, st.y * H, st.s, st.s);
+  }
+  g2.globalAlpha = 1;
+}
+
+function drawSpace(t) {
+  ctx.drawImage(bgCv, 0, 0, W, H);
+
+  var ox = (cam.x - cam.y) * 3, oy = (cam.x + cam.y) * 2;
+
+  // quelques étoiles scintillantes par-dessus
+  for (var i = 0; i < 46; i++) {
+    var s = DECOR.stars[i];
+    var tw = 0.5 + 0.5 * Math.sin(t * 1.7 + s.tw);
+    ctx.globalAlpha = s.a * tw;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(s.x * W, s.y * H, s.s + 0.6, s.s + 0.6);
+  }
+  ctx.globalAlpha = 1;
+
+  // planète annelée
+  var pxp = W * 0.18 - ox * 0.6, pyp = H * 0.16 - oy * 0.3, R = Math.min(W, H) * 0.15;
+  ctx.save();
+  ctx.translate(pxp, pyp); ctx.rotate(-0.35);
+  ctx.beginPath(); ctx.ellipse(0, 0, R * 2.05, R * 0.5, 0, 0, 6.2832);
+  ctx.strokeStyle = 'rgba(255,190,120,.30)'; ctx.lineWidth = R * 0.3; ctx.stroke();
+  ctx.restore();
+  ctx.beginPath(); ctx.arc(pxp, pyp, R, 0, 6.2832);
+  ctx.fillStyle = ballGrad(pxp, pyp, R, '#ffb37a', '#8c3f5e'); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(pxp, pyp + R * 0.25, R * 0.85, R * 0.16, -0.2, 0, 6.2832);
+  ctx.fillStyle = 'rgba(120,40,70,.35)'; ctx.fill();
+  ctx.save();
+  ctx.translate(pxp, pyp); ctx.rotate(-0.35);
+  ctx.beginPath(); ctx.ellipse(0, 0, R * 2.05, R * 0.5, 0, Math.PI * 0.06, Math.PI * 0.94);
+  ctx.strokeStyle = 'rgba(255,210,150,.45)'; ctx.lineWidth = R * 0.3; ctx.stroke();
+  ctx.restore();
+
+  // petite lune
+  var mx = W * 0.86 - ox * 1.1, my = H * 0.1 - oy * 0.5, mr = Math.min(W, H) * 0.045;
+  ctx.beginPath(); ctx.arc(mx, my, mr, 0, 6.2832);
+  ctx.fillStyle = ballGrad(mx, my, mr, '#dfe6ff', '#7c86b8'); ctx.fill();
+}
+
+/* ---------- sol : la plateforme flottante ---------- */
+function isoRect(x0, y0, x1, y1, fill, stroke) {
+  poly([toScreen(x0, y0, 0), toScreen(x1, y0, 0), toScreen(x1, y1, 0), toScreen(x0, y1, 0)], fill, stroke);
+}
+function isoLine(x0, y0, x1, y1, color, lw, dash) {
+  var a = toScreen(x0, y0, 0), b = toScreen(x1, y1, 0);
+  ctx.save();
+  if (dash) ctx.setLineDash(dash.map(function (v) { return v * cam.zoom; }));
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+  ctx.strokeStyle = color; ctx.lineWidth = (lw || 1) * cam.zoom; ctx.stroke();
+  ctx.restore();
+}
+
+function drawPlatform(t) {
+  var cx = WORLD_W / 2, cy = WORLD_H / 2;
+
+  // coque inférieure
+  box(cx, cy, -1.15, WORLD_W - 0.5, WORLD_H - 0.5, 0.55, '#26304e',
+      { top: '#26304e', left: sh('#26304e', 0.6), right: sh('#26304e', 0.8) });
+  box(cx, cy, -0.62, WORLD_W, WORLD_H, 0.62, '#38456b',
+      { top: '#38456b', left: sh('#38456b', 0.52), right: sh('#38456b', 0.76) });
+
+  // bandes d'avertissement sur la tranche
+  var s0 = toScreen(0, WORLD_H, 0), s1 = toScreen(WORLD_W, WORLD_H, 0);
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(s0.x, s0.y); ctx.lineTo(s1.x, s1.y);
+  ctx.lineTo(s1.x, s1.y + 12 * cam.zoom); ctx.lineTo(s0.x, s0.y + 12 * cam.zoom);
+  ctx.closePath(); ctx.clip();
+  for (var i = -2; i < 70; i++) {
+    ctx.fillStyle = (i % 2) ? '#ffca3a' : '#2a3350';
+    ctx.save();
+    ctx.translate(s0.x + i * 22 * cam.zoom, s0.y);
+    ctx.transform(1, (s1.y - s0.y) / (s1.x - s0.x), 0.5, 1, 0, 0);
+    ctx.fillRect(0, 0, 22 * cam.zoom, 13 * cam.zoom);
+    ctx.restore();
+  }
+  ctx.restore();
+
+  // pont métallique
+  isoRect(0, 0, WORLD_W, WORLD_H, '#4a5b8c');
+
+  // zone minière (régolithe)
+  isoRect(0.9, 0.5, 15.6, 5.9, '#6f6796');
+  isoRect(1.1, 0.7, 15.4, 5.7, '#79709f');
+
+  // allées
+  isoRect(0.4, 6.35, 16.6, 7.35, '#56679c');
+  isoRect(11.9, 6.35, 12.9, 12.6, '#56679c');
+  isoRect(0.4, 9.6, 15.8, 10.4, '#56679c');
+  isoLine(0.4, 6.85, 16.6, 6.85, 'rgba(255,255,255,.30)', 2, [10, 10]);
+  isoLine(12.4, 7.2, 12.4, 12.4, 'rgba(255,255,255,.30)', 2, [10, 10]);
+  isoLine(0.6, 10.0, 15.6, 10.0, 'rgba(255,255,255,.22)', 2, [10, 10]);
+
+  // joints de panneaux
+  ctx.globalAlpha = 0.10;
+  for (var gx = 1; gx < WORLD_W; gx += 1) isoLine(gx, 0, gx, WORLD_H, '#ffffff', 1);
+  for (var gy = 1; gy < WORLD_H; gy += 1) isoLine(0, gy, WORLD_W, gy, '#ffffff', 1);
+  ctx.globalAlpha = 1;
+
+  // cratères / impacts
+  for (var c = 0; c < DECOR.craters.length; c++) {
+    var cr = DECOR.craters[c];
+    disc(cr.x, cr.y, 0.001, cr.r, 'rgba(30,26,50,.28)');
+    disc(cr.x, cr.y - 0.04, 0.001, cr.r * 0.72, 'rgba(255,255,255,.05)');
+  }
+
+  // balises lumineuses au sol
+  for (var l = 0; l < DECOR.lights.length; l++) {
+    var li = DECOR.lights[l];
+    var a = 0.25 + 0.25 * Math.sin(t * 2 + li.ph);
+    disc(li.x, li.y, 0.001, 0.11, 'rgba(120,220,255,' + a + ')');
+  }
+
+  // marquages
+  ctx.globalAlpha = 0.5;
+  discStroke(REFINERY_POS.x, REFINERY_POS.y, 0.002, 2.1, 'rgba(255,202,58,.35)', 2.5);
+  discStroke(ROCKET_POS.x, ROCKET_POS.y, 0.002, 1.7, 'rgba(255,255,255,.30)', 3);
+  discStroke(ROCKET_POS.x, ROCKET_POS.y, 0.002, 1.35, 'rgba(255,255,255,.18)', 2);
+  ctx.globalAlpha = 1;
+
+  // socles (partie plate, non triée)
+  for (var p = 0; p < S.pads.length; p++) drawSocket(S.pads[p], t);
+
+  // réacteurs sous la plateforme
+  var eng = [[2.5, WORLD_H - 0.6], [WORLD_W - 2.5, WORLD_H - 0.6]];
+  for (var e = 0; e < eng.length; e++) {
+    var sp = toScreen(eng[e][0], eng[e][1], -1.6);
+    var g = ctx.createRadialGradient(sp.x, sp.y, 2, sp.x, sp.y, 62 * cam.zoom);
+    var pulse = 0.5 + 0.18 * Math.sin(t * 4 + e);
+    g.addColorStop(0, 'rgba(120,220,255,' + pulse + ')');
+    g.addColorStop(0.5, 'rgba(90,140,255,.18)');
+    g.addColorStop(1, 'rgba(90,140,255,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.ellipse(sp.x, sp.y, 40 * cam.zoom, 60 * cam.zoom, 0, 0, 6.2832); ctx.fill();
+  }
+}
+
+/* ---------- socle d'extraction ---------- */
+function drawSocket(p, t) {
+  var col = p.unlocked ? '#5f6f9e' : '#414d75';
+  box(p.x, p.y, 0, 1.55, 1.55, 0.14, col, { top: sh(col, 1.15), edge: '#9fc4ff', edgeA: 0.25 });
+  var glow = p.unlocked ? (p.drill ? TIERS[p.drill.tier].glow : '#48e2c6') : '#7ab8ff';
+  var a = p.unlocked ? 0.5 : 0.28 + 0.18 * Math.sin(t * 3 + p.i);
+  discStroke(p.x, p.y, 0.145, 0.62, rgba(glow, a), 2.5);
+  if (!p.unlocked) {
+    discStroke(p.x, p.y, 0.145, 0.44, rgba('#7ab8ff', 0.18), 1.5);
+    // jauge d'achat
+    if (p.paid > 0) {
+      var s = toScreen(p.x, p.y, 0.145);
+      var frac = clamp(p.paid / p.cost, 0, 1);
+      ctx.beginPath();
+      ctx.ellipse(s.x, s.y, 0.62 * (TILE_W / 2) * cam.zoom, 0.62 * (TILE_H / 2) * cam.zoom, 0, -Math.PI / 2, -Math.PI / 2 + frac * 6.2832);
+      ctx.strokeStyle = '#48e2c6'; ctx.lineWidth = 5 * cam.zoom; ctx.stroke();
+    }
+  }
+}
+
+/* Étiquette flottante (prix, rang…) — mise en file, dessinée au-dessus de tout */
+var LBL = [];
+function label(x, y, z, text, opts) {
+  LBL.push({ d: x + y, x: x, y: y, z: z, text: text, opts: opts || {} });
+}
+function flushLabels() {
+  LBL.sort(function (a, b) { return a.d - b.d; });
+  for (var i = 0; i < LBL.length; i++) {
+    var L = LBL[i];
+    drawLabel(L.x, L.y, L.z, L.text, L.opts);
+  }
+  LBL.length = 0;
+}
+function drawLabel(x, y, z, text, opts) {
+  opts = opts || {};
+  var s = toScreen(x, y, z);
+  var fs = (opts.size || 14) * cam.zoom;
+  ctx.font = '800 ' + fs + 'px "Baloo 2", ui-rounded, Verdana, sans-serif';
+  var w = ctx.measureText(text).width + 16 * cam.zoom;
+  var h = fs + 10 * cam.zoom;
+  ctx.globalAlpha = opts.alpha === undefined ? 1 : opts.alpha;
+  roundRect(s.x - w / 2, s.y - h / 2, w, h, h / 2);
+  ctx.fillStyle = opts.bg || 'rgba(10,18,36,.88)'; ctx.fill();
+  ctx.strokeStyle = opts.border || 'rgba(140,190,255,.45)'; ctx.lineWidth = 1.6 * cam.zoom; ctx.stroke();
+  ctx.fillStyle = opts.color || '#eaf2ff';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, s.x, s.y + 0.5 * cam.zoom);
+  ctx.globalAlpha = 1;
+}
+
+/* ---------- foreuse ---------- */
+function drawDrill(p, t) {
+  var d = p.drill, T = TIERS[d.tier];
+  var k = 1 + (p.pop || 0) * 0.18 + d.pulse * 0.06;
+  var z = 0.14;
+  shadow(p.x, p.y + 0.1, 0.62, 0.3);
+
+  // embase
+  box(p.x, p.y, z, 1.0 * k, 1.0 * k, 0.22 * k, '#37426a', { top: '#465379', edge: '#8fb6ff', edgeA: 0.3 });
+  // corps
+  box(p.x, p.y, z + 0.22 * k, 0.78 * k, 0.78 * k, 0.5 * k, T.body,
+      { top: sh(T.body, 1.12), left: sh(T.dark, 0.82), right: sh(T.dark, 1.05), edge: '#ffffff', edgeA: 0.18 });
+  // bandeau lumineux
+  var bs = toScreen(p.x, p.y, z + 0.5 * k);
+  ctx.globalAlpha = 0.85;
+  ctx.fillStyle = rgba(T.glow, 0.55 + d.pulse * 0.4);
+  ctx.fillRect(bs.x - 20 * cam.zoom * k, bs.y + 2 * cam.zoom, 40 * cam.zoom * k, 4 * cam.zoom);
+  ctx.globalAlpha = 1;
+
+  // noyau + anneaux gyroscopiques
+  var cs = toScreen(p.x, p.y, z + 0.86 * k);
+  var rr = 15 * cam.zoom * k;
+  ctx.save();
+  ctx.globalAlpha = 0.9;
+  ctx.strokeStyle = rgba(T.glow, 0.8); ctx.lineWidth = 2.4 * cam.zoom;
+  ctx.beginPath(); ctx.ellipse(cs.x, cs.y, rr, Math.abs(Math.cos(d.spin)) * rr * 0.85 + 2, 0, 0, 6.2832); ctx.stroke();
+  ctx.strokeStyle = rgba(T.body, 0.7);
+  ctx.beginPath(); ctx.ellipse(cs.x, cs.y, Math.abs(Math.sin(d.spin * 0.8)) * rr * 0.9 + 3, rr * 0.6, 0, 0, 6.2832); ctx.stroke();
+  ctx.restore();
+  var coreR = (7 + d.pulse * 3) * cam.zoom * k;
+  var cg = ctx.createRadialGradient(cs.x, cs.y, 1, cs.x, cs.y, coreR * 2.6);
+  cg.addColorStop(0, rgba(T.crystal, 1)); cg.addColorStop(0.35, rgba(T.glow, 0.7)); cg.addColorStop(1, rgba(T.glow, 0));
+  ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(cs.x, cs.y, coreR * 2.6, 0, 6.2832); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cs.x, cs.y, coreR * 0.55, 0, 6.2832); ctx.fill();
+
+  // tête de forage (sous le corps, côté avant)
+  var ds = toScreen(p.x, p.y + 0.4, z + 0.2);
+  ctx.save();
+  ctx.translate(ds.x, ds.y);
+  ctx.fillStyle = '#39456f';                       // fourreau
+  roundRect(-8 * cam.zoom, -20 * cam.zoom, 16 * cam.zoom, 14 * cam.zoom, 4 * cam.zoom); ctx.fill();
+  var dg = ctx.createLinearGradient(-7 * cam.zoom, 0, 7 * cam.zoom, 0);
+  dg.addColorStop(0, sh(T.dark, 0.7)); dg.addColorStop(0.45, sh(T.body, 1.05)); dg.addColorStop(1, sh(T.dark, 0.85));
+  ctx.fillStyle = dg;                              // foret
+  ctx.beginPath();
+  ctx.moveTo(-6 * cam.zoom, -8 * cam.zoom); ctx.lineTo(6 * cam.zoom, -8 * cam.zoom);
+  ctx.lineTo(0, 12 * cam.zoom); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = rgba(T.glow, 0.9); ctx.lineWidth = 1.8 * cam.zoom;
+  for (var i = 0; i < 3; i++) {
+    var yy = -6 * cam.zoom + i * 5 * cam.zoom + ((d.spin * 9) % (5 * cam.zoom));
+    var ww = (5.2 - (yy + 6 * cam.zoom) / (18 * cam.zoom) * 5) * cam.zoom;
+    if (ww <= 0) continue;
+    ctx.beginPath(); ctx.moveTo(-ww, yy); ctx.lineTo(ww, yy + 1.8 * cam.zoom); ctx.stroke();
+  }
+  ctx.restore();
+
+  // antenne
+  var a0 = toScreen(p.x - 0.3, p.y - 0.3, z + 0.72), a1 = toScreen(p.x - 0.3, p.y - 0.3, z + 1.05);
+  ctx.strokeStyle = '#8ea4c9'; ctx.lineWidth = 2 * cam.zoom;
+  ctx.beginPath(); ctx.moveTo(a0.x, a0.y); ctx.lineTo(a1.x, a1.y); ctx.stroke();
+  ctx.fillStyle = (Math.sin(t * 4 + p.i) > 0) ? '#ff6b81' : '#7a2233';
+  ctx.beginPath(); ctx.arc(a1.x, a1.y, 3 * cam.zoom, 0, 6.2832); ctx.fill();
+
+  // badge de rang
+  label(p.x, p.y, z + 1.42, T.name, { size: 12, bg: rgba(T.dark, 0.92), border: rgba(T.glow, 0.8), color: '#fff' });
+}
+
+/* ---------- cristal ---------- */
+function drawCrystalShape(sx, sy, k, T, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha === undefined ? 1 : alpha;
+  var g = ctx.createRadialGradient(sx, sy - k * 0.3, 1, sx, sy - k * 0.3, k * 3);
+  g.addColorStop(0, rgba(T.glow, 0.55)); g.addColorStop(1, rgba(T.glow, 0));
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(sx, sy - k * 0.3, k * 3, 0, 6.2832); ctx.fill();
+
+  ctx.beginPath();                                   // facette gauche
+  ctx.moveTo(sx, sy - k * 1.75); ctx.lineTo(sx - k, sy - k * 0.25); ctx.lineTo(sx, sy + k * 1.0); ctx.closePath();
+  ctx.fillStyle = sh(T.crystal, 0.72); ctx.fill();
+  ctx.beginPath();                                   // facette droite
+  ctx.moveTo(sx, sy - k * 1.75); ctx.lineTo(sx + k, sy - k * 0.25); ctx.lineTo(sx, sy + k * 1.0); ctx.closePath();
+  ctx.fillStyle = T.crystal; ctx.fill();
+  ctx.beginPath();                                   // éclat
+  ctx.moveTo(sx, sy - k * 1.7); ctx.lineTo(sx + k * 0.45, sy - k * 0.5); ctx.lineTo(sx + k * 0.12, sy - k * 0.35); ctx.closePath();
+  ctx.fillStyle = 'rgba(255,255,255,.75)'; ctx.fill();
+  ctx.restore();
+}
+function drawOre(o, t) {
+  var T = TIERS[o.tier];
+  var lift = 0.22 + Math.sin(t * 2.2 + o.bob) * 0.06;
+  var k = 11 * cam.zoom * (0.85 + o.tier * 0.015) * o.spawn;
+  shadow(o.x, o.y, 0.22 * o.spawn, 0.3);
+  var s = toScreen(o.x, o.y, lift);
+  drawCrystalShape(s.x, s.y, k, T);
+}
+
+/* ---------- puce de crédit ---------- */
+function drawChip(sx, sy, k, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha === undefined ? 1 : alpha;
+  ctx.fillStyle = '#0e8f7c';
+  roundRect(sx - k, sy - k * 0.42 + k * 0.22, k * 2, k * 0.72, k * 0.2); ctx.fill();
+  var g = ctx.createLinearGradient(sx - k, sy, sx + k, sy);
+  g.addColorStop(0, '#38d6b4'); g.addColorStop(0.5, '#8affe4'); g.addColorStop(1, '#2fc0a2');
+  ctx.fillStyle = g;
+  roundRect(sx - k, sy - k * 0.42, k * 2, k * 0.72, k * 0.2); ctx.fill();
+  ctx.fillStyle = 'rgba(4,45,38,.75)';
+  ctx.font = '800 ' + (k * 0.7) + 'px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('◈', sx, sy - k * 0.04);
+  ctx.restore();
+}
+
+/* ---------- raffinerie (4 modules triés séparément) ---------- */
+function drawHopper(t) {
+  var P = REFINERY_IN, r = S.refinery;
+  shadow(P.x, P.y, 0.8, 0.3);
+  box(P.x, P.y, 0, 1.15, 1.0, 0.55, '#2b3560', { top: '#3b4878', edge: '#9fc4ff', edgeA: 0.3 });
+  box(P.x, P.y, 0.55, 1.45, 1.25, 0.16, '#55e0bf', { top: '#6ff0d2', edge: '#d4fff5', edgeA: 0.7 });
+  var hs = toScreen(P.x, P.y, 0.72);
+  var g = ctx.createRadialGradient(hs.x, hs.y, 1, hs.x, hs.y, 34 * cam.zoom);
+  g.addColorStop(0, rgba('#48e2c6', 0.75)); g.addColorStop(1, rgba('#48e2c6', 0));
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.ellipse(hs.x, hs.y, 34 * cam.zoom, 18 * cam.zoom, 0, 0, 6.2832); ctx.fill();
+  ctx.fillStyle = 'rgba(10,26,40,.75)';
+  ctx.beginPath(); ctx.ellipse(hs.x, hs.y, 24 * cam.zoom, 12 * cam.zoom, 0, 0, 6.2832); ctx.fill();
+  // chevrons animés
+  for (var i = 0; i < 3; i++) {
+    var ph = ((t * 1.3 + i * 0.33) % 1);
+    ctx.globalAlpha = 0.25 + 0.55 * (1 - ph);
+    ctx.strokeStyle = '#8affe4'; ctx.lineWidth = 3 * cam.zoom; ctx.lineCap = 'round';
+    var yy = hs.y - (42 - ph * 26) * cam.zoom;
+    ctx.beginPath();
+    ctx.moveTo(hs.x - 9 * cam.zoom, yy); ctx.lineTo(hs.x, yy + 6 * cam.zoom); ctx.lineTo(hs.x + 9 * cam.zoom, yy);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  label(P.x, P.y, 1.35, '⬇ CRISTAUX' + (r.queue.length ? ' · ' + r.queue.length : ''),
+        { size: 10, color: '#bfe9ff', border: 'rgba(72,226,198,.55)', alpha: 0.92 });
+}
+
+function drawRefineryBody(t) {
+  var P = REFINERY_POS, r = S.refinery;
+  shadow(P.x, P.y, 1.7, 0.38);
+  // jupe sombre
+  box(P.x, P.y, 0, 2.7, 2.15, 0.3, '#232c4e', { top: '#2c3760' });
+  var sk0 = toScreen(P.x - 1.35, P.y + 1.07, 0.3), sk1 = toScreen(P.x + 1.35, P.y + 1.07, 0.3);
+  ctx.strokeStyle = 'rgba(255,176,46,.75)'; ctx.lineWidth = 4 * cam.zoom;
+  ctx.beginPath(); ctx.moveTo(sk0.x, sk0.y); ctx.lineTo(sk1.x, sk1.y); ctx.stroke();
+  // corps principal
+  box(P.x, P.y, 0.3, 2.35, 1.85, 1.35, '#3c4a80',
+      { top: '#57689f', left: '#2a3462', right: '#45538c', edge: '#a9c6ff', edgeA: 0.35 });
+  // bandeau lumineux
+  var f0 = toScreen(P.x - 1.17, P.y + 0.92, 1.28), f1 = toScreen(P.x + 1.17, P.y + 0.92, 1.28);
+  ctx.strokeStyle = rgba('#48e2c6', 0.45 + r.pulse * 0.55); ctx.lineWidth = 6 * cam.zoom;
+  ctx.beginPath(); ctx.moveTo(f0.x, f0.y); ctx.lineTo(f1.x, f1.y); ctx.stroke();
+  // hublots sur la face avant
+  for (var i = 0; i < 3; i++) {
+    var hs = toScreen(P.x - 0.7 + i * 0.7, P.y + 0.93, 1.0);
+    ctx.beginPath(); ctx.ellipse(hs.x, hs.y, 9 * cam.zoom, 7 * cam.zoom, 0, 0, 6.2832);
+    ctx.fillStyle = rgba('#ffca3a', r.queue.length ? 0.85 : 0.3); ctx.fill();
+    ctx.strokeStyle = '#2a3462'; ctx.lineWidth = 2 * cam.zoom; ctx.stroke();
+  }
+  // toit technique
+  box(P.x + 0.25, P.y - 0.1, 1.65, 1.75, 1.4, 0.22, '#2f3a68', { top: '#3d4a80' });
+  // cuves sur le toit
+  cyl(P.x - 0.55, P.y - 0.35, 1.87, 0.46, 0.85, '#7ab8ff');
+  cyl(P.x - 0.5, P.y + 0.5, 1.87, 0.36, 0.58, '#48e2c6');
+  var lv = clamp(r.queue.length / 12, 0, 1);
+  var vs = toScreen(P.x - 0.55, P.y - 0.35, 1.95 + 0.68 * lv);
+  ctx.fillStyle = rgba('#8affe4', 0.9);
+  ctx.beginPath(); ctx.ellipse(vs.x, vs.y, 0.46 * (TILE_W / 2) * cam.zoom * 0.85, 0.46 * (TILE_H / 2) * cam.zoom * 0.85, 0, 0, 6.2832); ctx.fill();
+  // cheminée + vapeur
+  cyl(P.x + 0.85, P.y - 0.5, 2.07, 0.22, 0.85, '#93a1c6');
+  for (var k = 0; k < 4; k++) {
+    var ph = (t * 0.5 + k * 0.25) % 1;
+    var ss = toScreen(P.x + 0.85, P.y - 0.5, 2.95 + ph * 1.4);
+    ctx.globalAlpha = (1 - ph) * 0.3;
+    ctx.fillStyle = '#dbe7ff';
+    ctx.beginPath(); ctx.arc(ss.x + Math.sin(ph * 6 + k) * 9 * cam.zoom, ss.y, (6 + ph * 16) * cam.zoom, 0, 6.2832); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  // gyrophare
+  var bl = toScreen(P.x - 0.9, P.y + 0.5, 1.92);
+  var on = r.queue.length > 0;
+  var bg2 = ctx.createRadialGradient(bl.x, bl.y, 1, bl.x, bl.y, 16 * cam.zoom);
+  bg2.addColorStop(0, on ? rgba('#ffca3a', 0.5 + 0.5 * Math.abs(Math.sin(t * 5))) : 'rgba(120,130,160,.35)');
+  bg2.addColorStop(1, 'rgba(255,202,58,0)');
+  ctx.fillStyle = bg2; ctx.beginPath(); ctx.arc(bl.x, bl.y, 16 * cam.zoom, 0, 6.2832); ctx.fill();
+  ctx.fillStyle = on ? '#ffd97a' : '#5c6688';
+  ctx.beginPath(); ctx.arc(bl.x, bl.y, 4.5 * cam.zoom, 0, 6.2832); ctx.fill();
+  label(P.x, P.y, 3.0, 'RAFFINERIE', { size: 11, color: '#ffd97a', border: 'rgba(255,202,58,.5)', alpha: 0.92 });
+}
+
+function drawConveyor(t) {
+  var ax = REFINERY_POS.x - 0.9, ay = REFINERY_POS.y + 1.0;
+  var bx = REFINERY_OUT.x, by = REFINERY_OUT.y;
+  var mx = (ax + bx) / 2, my = (ay + by) / 2;
+  var w = Math.abs(bx - ax) + 0.55, d = Math.abs(by - ay) + 0.55;
+  box(mx, my, 0, w, d, 0.3, '#232c4e', { top: '#39457a' });
+  // rails
+  var r0 = toScreen(mx - w / 2, my - d / 2, 0.32), r1 = toScreen(mx + w / 2, my + d / 2, 0.32);
+  ctx.strokeStyle = 'rgba(140,190,255,.25)'; ctx.lineWidth = 2 * cam.zoom;
+  ctx.beginPath(); ctx.moveTo(r0.x, r0.y); ctx.lineTo(r1.x, r1.y); ctx.stroke();
+  for (var b = 0; b < 4; b++) {
+    var ph = ((t * 0.8 + b / 4) % 1);
+    var s = toScreen(lerp(ax, bx, ph), lerp(ay, by, ph), 0.33);
+    drawChip(s.x, s.y, 7 * cam.zoom, 0.55);
+  }
+}
+
+function drawTray(t) {
+  var P = REFINERY_OUT, r = S.refinery;
+  shadow(P.x, P.y, 0.85, 0.3);
+  box(P.x, P.y, 0, 1.4, 1.2, 0.2, '#232c4e', { top: '#2f3b68' });
+  box(P.x, P.y, 0.2, 1.15, 0.95, 0.3, '#48568f', { top: '#6172b4', edge: '#8affe4', edgeA: 0.8 });
+  var n = Math.min(r.tray.length, 18);
+  for (var c = 0; c < n; c++) {
+    var col = c % 3, row = ((c / 3) | 0) % 3, layer = (c / 9) | 0;
+    var cs = toScreen(P.x - 0.28 + col * 0.28, P.y - 0.24 + row * 0.24, 0.52 + layer * 0.09);
+    drawChip(cs.x, cs.y, 9.5 * cam.zoom);
+  }
+  if (r.tray.length) label(P.x, P.y, 1.15, r.tray.length + ' ◈', { size: 12, color: '#8affe4', border: 'rgba(72,226,198,.6)' });
+  else label(P.x, P.y, 1.0, '◈ SORTIE', { size: 10, color: '#9fb4d8', alpha: 0.7 });
+}
+
+/* ---------- terminal de crédits ---------- */
+function drawTerminal(t) {
+  var P = TERMINAL_POS;
+  shadow(P.x, P.y, 1.0, 0.34);
+  box(P.x, P.y, 0, 1.7, 1.35, 0.2, '#3c4a7c', { top: '#4a5992' });
+  box(P.x, P.y, 0.2, 1.35, 1.05, 0.62, '#5a6aa8', { top: '#6b7cc0', edge: '#bcd6ff', edgeA: 0.45 });
+  // arche lumineuse
+  var a0 = toScreen(P.x - 0.72, P.y, 0.2), a1 = toScreen(P.x + 0.72, P.y, 0.2);
+  var top = toScreen(P.x, P.y, 1.85);
+  ctx.save();
+  ctx.strokeStyle = rgba('#48e2c6', 0.55); ctx.lineWidth = 7 * cam.zoom; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(a0.x, a0.y); ctx.quadraticCurveTo(top.x - 34 * cam.zoom, top.y, top.x, top.y);
+  ctx.quadraticCurveTo(top.x + 34 * cam.zoom, top.y, a1.x, a1.y);
+  ctx.stroke();
+  ctx.restore();
+  // écran incliné
+  var es = toScreen(P.x, P.y + 0.2, 0.84);
+  ctx.save();
+  ctx.fillStyle = '#0c1730';
+  roundRect(es.x - 26 * cam.zoom, es.y - 26 * cam.zoom, 52 * cam.zoom, 26 * cam.zoom, 6 * cam.zoom); ctx.fill();
+  ctx.strokeStyle = rgba('#48e2c6', 0.6); ctx.lineWidth = 2 * cam.zoom; ctx.stroke();
+  ctx.fillStyle = '#8affe4';
+  ctx.font = '800 ' + (13 * cam.zoom) + 'px "Baloo 2", sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(fmt(S.credits), es.x, es.y - 13 * cam.zoom);
+  ctx.restore();
+  // fente d'insertion
+  var fs = toScreen(P.x, P.y + 0.55, 0.42);
+  ctx.fillStyle = rgba('#48e2c6', 0.45 + 0.35 * Math.sin(t * 4));
+  ctx.beginPath(); ctx.ellipse(fs.x, fs.y, 20 * cam.zoom, 7 * cam.zoom, 0, 0, 6.2832); ctx.fill();
+  // hologramme
+  var hs = toScreen(P.x, P.y, 1.55);
+  ctx.save();
+  var hg = ctx.createRadialGradient(hs.x, hs.y, 2, hs.x, hs.y, 42 * cam.zoom);
+  hg.addColorStop(0, 'rgba(72,226,198,.5)'); hg.addColorStop(1, 'rgba(72,226,198,0)');
+  ctx.fillStyle = hg; ctx.beginPath(); ctx.arc(hs.x, hs.y, 42 * cam.zoom, 0, 6.2832); ctx.fill();
+  ctx.translate(hs.x, hs.y);
+  ctx.scale(0.55 + 0.45 * Math.abs(Math.cos(t * 1.5)), 1);
+  ctx.fillStyle = '#8affe4';
+  ctx.font = '800 ' + (30 * cam.zoom) + 'px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('◈', 0, 0);
+  ctx.restore();
+  label(P.x, P.y, 2.2, 'TERMINAL', { size: 11, color: '#8affe4', border: 'rgba(72,226,198,.6)', alpha: 0.92 });
+}
+
+/* ---------- fusée, dôme, panneaux, antennes ---------- */
+function drawRocket(t) {
+  var P = ROCKET_POS;
+  shadow(P.x, P.y, 0.95, 0.3);
+  // pieds
+  for (var i = 0; i < 3; i++) {
+    var a = i * 2.09 + 0.5;
+    var f0 = toScreen(P.x, P.y, 0.55), f1 = toScreen(P.x + Math.cos(a) * 0.55, P.y + Math.sin(a) * 0.55, 0);
+    ctx.strokeStyle = '#98a6c8'; ctx.lineWidth = 5 * cam.zoom; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(f0.x, f0.y); ctx.lineTo(f1.x, f1.y); ctx.stroke();
+  }
+  cyl(P.x, P.y, 0.35, 0.62, 1.9, '#eef3ff');
+  // bande rouge
+  var bs = toScreen(P.x, P.y, 1.35);
+  ctx.fillStyle = '#ff6b81';
+  ctx.fillRect(bs.x - 0.62 * (TILE_W / 2) * cam.zoom, bs.y - 8 * cam.zoom, 0.62 * TILE_W * cam.zoom, 16 * cam.zoom);
+  // hublot
+  var ws = toScreen(P.x, P.y, 1.72);
+  ctx.beginPath(); ctx.arc(ws.x, ws.y, 11 * cam.zoom, 0, 6.2832);
+  ctx.fillStyle = ballGrad(ws.x, ws.y, 11 * cam.zoom, '#bfe8ff', '#2b5b96'); ctx.fill();
+  ctx.strokeStyle = '#c9d6ee'; ctx.lineWidth = 3 * cam.zoom; ctx.stroke();
+  // cône
+  var n0 = toScreen(P.x, P.y, 2.25), n1 = toScreen(P.x, P.y, 3.0);
+  ctx.beginPath();
+  ctx.moveTo(n0.x - 0.62 * (TILE_W / 2) * cam.zoom, n0.y);
+  ctx.lineTo(n1.x, n1.y); ctx.lineTo(n0.x + 0.62 * (TILE_W / 2) * cam.zoom, n0.y);
+  ctx.closePath();
+  var ng = ctx.createLinearGradient(n0.x - 30 * cam.zoom, 0, n0.x + 30 * cam.zoom, 0);
+  ng.addColorStop(0, '#c94b63'); ng.addColorStop(0.5, '#ff8095'); ng.addColorStop(1, '#d05a72');
+  ctx.fillStyle = ng; ctx.fill();
+  // ailerons
+  [[-1, 0], [1, 0]].forEach(function (d) {
+    var p0 = toScreen(P.x + d[0] * 0.5, P.y, 0.9), p1 = toScreen(P.x + d[0] * 1.05, P.y, 0.2), p2 = toScreen(P.x + d[0] * 0.5, P.y, 0.35);
+    ctx.beginPath(); ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.closePath();
+    ctx.fillStyle = '#ff6b81'; ctx.fill();
+  });
+  label(P.x, P.y, 3.35, 'ASTRA-1', { size: 10, color: '#cfe0ff', alpha: 0.8 });
+}
+
+function drawDome(t) {
+  var P = DOME_POS;
+  shadow(P.x, P.y, 1.45, 0.3);
+  cyl(P.x, P.y, 0, 1.35, 0.35, '#5d6b96');
+  var s = toScreen(P.x, P.y, 0.35);
+  var R = 1.35 * (TILE_W / 2) * cam.zoom;
+  ctx.save();
+  ctx.beginPath(); ctx.ellipse(s.x, s.y, R, R * 0.92, 0, Math.PI, 0);
+  ctx.closePath();
+  var g = ctx.createRadialGradient(s.x - R * 0.35, s.y - R * 0.5, R * 0.1, s.x, s.y, R * 1.2);
+  g.addColorStop(0, 'rgba(190,235,255,.85)'); g.addColorStop(0.55, 'rgba(110,180,235,.55)'); g.addColorStop(1, 'rgba(40,90,160,.65)');
+  ctx.fillStyle = g; ctx.fill();
+  ctx.strokeStyle = 'rgba(190,225,255,.5)'; ctx.lineWidth = 2 * cam.zoom; ctx.stroke();
+  // reflets
+  ctx.beginPath(); ctx.ellipse(s.x - R * 0.35, s.y - R * 0.35, R * 0.18, R * 0.34, -0.5, 0, 6.2832);
+  ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.fill();
+  // plantes sous le dôme
+  ctx.beginPath(); ctx.ellipse(s.x, s.y - R * 0.1, R * 0.55, R * 0.2, 0, 0, 6.2832);
+  ctx.fillStyle = 'rgba(90,230,160,.5)'; ctx.fill();
+  ctx.restore();
+  // sas
+  box(P.x - 0.2, P.y + 1.25, 0, 0.8, 0.7, 0.6, '#48568a', { top: '#5a6a9e' });
+}
+
+function drawSolar(x, y, t) {
+  shadow(x, y, 0.7, 0.26);
+  cyl(x, y, 0, 0.12, 0.55, '#8e9cc0');
+  var c = toScreen(x, y, 0.72);
+  var w = 0.95 * (TILE_W / 2) * cam.zoom, h = 0.62 * (TILE_H / 2) * cam.zoom;
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.beginPath();
+  ctx.moveTo(-w, -h * 0.4); ctx.lineTo(0, -h * 1.5); ctx.lineTo(w, -h * 0.4); ctx.lineTo(0, h * 0.75);
+  ctx.closePath();
+  var g = ctx.createLinearGradient(-w, 0, w, 0);
+  g.addColorStop(0, '#2a4a8c'); g.addColorStop(0.5, '#4f7fd0'); g.addColorStop(1, '#22376a');
+  ctx.fillStyle = g; ctx.fill();
+  ctx.strokeStyle = 'rgba(190,220,255,.4)'; ctx.lineWidth = 1.4 * cam.zoom; ctx.stroke();
+  for (var i = 1; i < 4; i++) {
+    ctx.beginPath();
+    ctx.moveTo(-w + (w * 2 * i / 4), -h * 0.4 + (h * 1.1 * i / 4));
+    ctx.lineTo(-w + (w * 2 * i / 4) + w * 0.5, h * 0.2);
+    ctx.strokeStyle = 'rgba(190,220,255,.18)'; ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawAntenna(x, y, t) {
+  shadow(x, y, 0.55, 0.26);
+  cyl(x, y, 0, 0.14, 1.1, '#98a6c8');
+  var c = toScreen(x, y, 1.25);
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate(-0.5);
+  ctx.beginPath(); ctx.ellipse(0, 0, 26 * cam.zoom, 17 * cam.zoom, 0, 0, 6.2832);
+  var g = ctx.createRadialGradient(-6 * cam.zoom, -6 * cam.zoom, 2, 0, 0, 28 * cam.zoom);
+  g.addColorStop(0, '#eaf2ff'); g.addColorStop(1, '#93a3c8');
+  ctx.fillStyle = g; ctx.fill();
+  ctx.strokeStyle = '#cfd9ef'; ctx.lineWidth = 2 * cam.zoom; ctx.stroke();
+  ctx.beginPath(); ctx.arc(0, 0, 4 * cam.zoom, 0, 6.2832); ctx.fillStyle = '#ff6b81'; ctx.fill();
+  ctx.restore();
+  // onde radio
+  var a = (t * 0.8) % 1;
+  ctx.globalAlpha = (1 - a) * 0.5;
+  discStroke(x, y, 1.3 + a * 1.2, 0.4 + a * 0.9, 'rgba(140,200,255,.9)', 2);
+  ctx.globalAlpha = 1;
+}
+
+function drawRock(r) {
+  var s = toScreen(r.x, r.y, 0);
+  var k = r.s * 30 * cam.zoom;
+  shadow(r.x, r.y, r.s * 0.7, 0.24);
+  ctx.beginPath();
+  ctx.moveTo(s.x - k, s.y); ctx.lineTo(s.x - k * 0.4, s.y - k * 0.95);
+  ctx.lineTo(s.x + k * 0.45, s.y - k * 0.8); ctx.lineTo(s.x + k, s.y + k * 0.1);
+  ctx.lineTo(s.x + k * 0.2, s.y + k * 0.35); ctx.closePath();
+  ctx.fillStyle = r.k > 0.5 ? '#59547a' : '#4d4a6d'; ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(s.x - k * 0.4, s.y - k * 0.95); ctx.lineTo(s.x + k * 0.45, s.y - k * 0.8);
+  ctx.lineTo(s.x + k * 0.1, s.y - k * 0.35); ctx.closePath();
+  ctx.fillStyle = '#6e688f'; ctx.fill();
+}
+
+function drawPlant(p, t) {
+  var s = toScreen(p.x, p.y, 0);
+  var k = p.s * cam.zoom;
+  var sway = Math.sin(t * 1.4 + p.ph) * 4 * k;
+  shadow(p.x, p.y, p.s * 0.35, 0.22);
+  ctx.save();
+  ctx.translate(s.x, s.y);
+  ctx.strokeStyle = '#3fae7a'; ctx.lineWidth = 3 * k; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.quadraticCurveTo(sway * 0.4, -18 * k, sway, -34 * k); ctx.stroke();
+  var col = p.k > 0.5 ? '#7dffb4' : '#b48cff';
+  var gg = ctx.createRadialGradient(sway, -34 * k, 1, sway, -34 * k, 16 * k);
+  gg.addColorStop(0, rgba(col, 0.6)); gg.addColorStop(1, rgba(col, 0));
+  ctx.fillStyle = gg; ctx.beginPath(); ctx.arc(sway, -34 * k, 16 * k, 0, 6.2832); ctx.fill();
+  ctx.fillStyle = col;
+  ctx.beginPath(); ctx.ellipse(sway, -34 * k, 5 * k, 7 * k, 0, 0, 6.2832); ctx.fill();
+  ctx.fillStyle = rgba(col, 0.75);
+  ctx.beginPath(); ctx.ellipse(sway * 0.6 - 7 * k, -22 * k, 4 * k, 5 * k, -0.5, 0, 6.2832); ctx.fill();
+  ctx.restore();
+}
+
+function drawCrate(x, y, tier) {
+  shadow(x, y, 0.42, 0.28);
+  var T = TIERS[tier % TIERS.length];
+  box(x, y, 0, 0.7, 0.7, 0.62, '#6a5f8c', { top: '#7d719f', edge: T.glow, edgeA: 0.6 });
+  var s = toScreen(x, y, 0.63);
+  ctx.fillStyle = rgba(T.glow, 0.8);
+  ctx.font = '800 ' + (13 * cam.zoom) + 'px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('◈', s.x, s.y + 2 * cam.zoom);
+}
+
+function drawFencePost(x, y, t) {
+  cyl(x, y, 0, 0.09, 0.5, '#7f8db3');
+  var s = toScreen(x, y, 0.54);
+  ctx.fillStyle = rgba('#7ab8ff', 0.6 + 0.35 * Math.sin(t * 3 + x + y));
+  ctx.beginPath(); ctx.arc(s.x, s.y, 3.5 * cam.zoom, 0, 6.2832); ctx.fill();
+}
+
+/* ---------- pile portée sur le dos ---------- */
+function drawCarryStack(a, topY, sx) {
+  if (!a.carry.length) return;
+  var n = a.carry.length;
+  var shown = Math.min(n, 16);
+  var step = (n > 12 ? 6.5 : 8.5) * cam.zoom;
+  for (var i = 0; i < shown; i++) {
+    var y = topY - i * step;
+    var wob = Math.sin(a.bob * 0.9 + i * 0.5) * (0.6 + i * 0.12) * cam.zoom;
+    if (a.carryType === 'chip') drawChip(sx + wob, y, 10 * cam.zoom);
+    else drawCrystalShape(sx + wob, y + 6 * cam.zoom, 8 * cam.zoom, TIERS[a.carry[i].tier]);
+  }
+  if (n > shown) {
+    ctx.fillStyle = '#fff';
+    ctx.font = '800 ' + (12 * cam.zoom) + 'px "Baloo 2", sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 3 * cam.zoom;
+    var ty = topY - shown * step - 6 * cam.zoom;
+    ctx.strokeText('+' + (n - shown), sx, ty); ctx.fillText('+' + (n - shown), sx, ty);
+  }
+}
+
+/* ---------- astronaute ---------- */
+function drawAstronaut(a, t) {
+  var s = toScreen(a.x, a.y, 0);
+  var k = cam.zoom;
+  var moving = a.moving;
+  var swing = moving ? Math.sin(a.walk * 2.2) : Math.sin(a.bob * 0.5) * 0.15;
+  var bob = moving ? Math.abs(Math.sin(a.walk * 2.2)) * 3 * k : Math.sin(a.bob * 0.5) * 1.5 * k;
+  shadow(a.x, a.y, 0.44, 0.36);
+
+  ctx.save();
+  ctx.translate(s.x, s.y - bob);
+  ctx.scale(a.face, 1);
+
+  var SUIT = '#f2f6ff', SUIT_D = '#c3cee4', ACC = '#ff9d3c';
+
+  // propulseurs
+  if (moving) {
+    var fg = ctx.createRadialGradient(-12 * k, -30 * k, 1, -12 * k, -30 * k, 16 * k);
+    fg.addColorStop(0, 'rgba(140,220,255,.75)'); fg.addColorStop(1, 'rgba(140,220,255,0)');
+    ctx.fillStyle = fg;
+    ctx.beginPath(); ctx.ellipse(-14 * k, -28 * k, 10 * k, 14 * k, 0.4, 0, 6.2832); ctx.fill();
+  }
+  // sac dorsal
+  ctx.fillStyle = SUIT_D;
+  roundRect(-20 * k, -56 * k, 16 * k, 28 * k, 6 * k); ctx.fill();
+  ctx.fillStyle = '#8f9ec0';
+  roundRect(-18 * k, -52 * k, 5 * k, 20 * k, 2.5 * k); ctx.fill();
+
+  // jambes
+  ctx.fillStyle = SUIT;
+  roundRect(-11 * k, -26 * k + swing * 2 * k, 10 * k, 24 * k, 5 * k); ctx.fill();
+  roundRect(1 * k, -26 * k - swing * 2 * k, 10 * k, 24 * k, 5 * k); ctx.fill();
+  ctx.fillStyle = '#4d5a80';
+  roundRect(-12 * k, -6 * k + swing * 2 * k, 12 * k, 7 * k, 3 * k); ctx.fill();
+  roundRect(0 * k, -6 * k - swing * 2 * k, 12 * k, 7 * k, 3 * k); ctx.fill();
+  ctx.fillStyle = ACC;
+  ctx.fillRect(-10 * k, -18 * k + swing * 2 * k, 8 * k, 3 * k);
+  ctx.fillRect(2 * k, -18 * k - swing * 2 * k, 8 * k, 3 * k);
+
+  // torse
+  ctx.fillStyle = SUIT;
+  roundRect(-13 * k, -54 * k, 26 * k, 30 * k, 10 * k); ctx.fill();
+  ctx.fillStyle = SUIT_D;
+  roundRect(-13 * k, -32 * k, 26 * k, 8 * k, 4 * k); ctx.fill();
+  // plastron
+  ctx.fillStyle = '#2c3a63';
+  roundRect(-7 * k, -48 * k, 14 * k, 11 * k, 3 * k); ctx.fill();
+  ctx.fillStyle = '#48e2c6';
+  ctx.fillRect(-5 * k, -45 * k, 4 * k, 2 * k);
+  ctx.fillStyle = '#ffca3a';
+  ctx.fillRect(-5 * k, -41 * k, 7 * k, 2 * k);
+
+  // bras
+  ctx.fillStyle = SUIT;
+  roundRect(-19 * k, -52 * k - swing * 2 * k, 9 * k, 22 * k, 4.5 * k); ctx.fill();
+  roundRect(10 * k, -52 * k + swing * 2 * k, 9 * k, 22 * k, 4.5 * k); ctx.fill();
+  ctx.fillStyle = ACC;
+  ctx.fillRect(-19 * k, -40 * k - swing * 2 * k, 9 * k, 3 * k);
+  ctx.fillRect(10 * k, -40 * k + swing * 2 * k, 9 * k, 3 * k);
+  ctx.fillStyle = '#4d5a80';
+  roundRect(-19 * k, -33 * k - swing * 2 * k, 9 * k, 7 * k, 3 * k); ctx.fill();
+  roundRect(10 * k, -33 * k + swing * 2 * k, 9 * k, 7 * k, 3 * k); ctx.fill();
+
+  // casque
+  ctx.beginPath(); ctx.arc(0, -66 * k, 15 * k, 0, 6.2832);
+  ctx.fillStyle = SUIT; ctx.fill();
+  ctx.strokeStyle = SUIT_D; ctx.lineWidth = 1.5 * k; ctx.stroke();
+  // visière
+  ctx.beginPath(); ctx.ellipse(2 * k, -66 * k, 11 * k, 9.5 * k, 0, 0, 6.2832);
+  var vg = ctx.createLinearGradient(-9 * k, -74 * k, 12 * k, -58 * k);
+  vg.addColorStop(0, '#7ee0ff'); vg.addColorStop(0.45, '#2a5da8'); vg.addColorStop(1, '#152a55');
+  ctx.fillStyle = vg; ctx.fill();
+  ctx.beginPath(); ctx.ellipse(-2 * k, -70 * k, 4 * k, 2.6 * k, -0.5, 0, 6.2832);
+  ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.fill();
+  // antenne
+  ctx.strokeStyle = SUIT_D; ctx.lineWidth = 2 * k;
+  ctx.beginPath(); ctx.moveTo(-11 * k, -74 * k); ctx.lineTo(-15 * k, -84 * k); ctx.stroke();
+  ctx.fillStyle = '#ff6b81';
+  ctx.beginPath(); ctx.arc(-15 * k, -85 * k, 3 * k, 0, 6.2832); ctx.fill();
+
+  ctx.restore();
+
+  drawCarryStack(a, s.y - bob - 88 * k, s.x);
+}
+
+/* ---------- drone ---------- */
+function drawDrone(d, t) {
+  var hover = 0.75 + Math.sin(d.bob) * 0.07;
+  var s = toScreen(d.x, d.y, hover);
+  var k = cam.zoom;
+  shadow(d.x, d.y, 0.3, 0.24);
+  ctx.save();
+  ctx.translate(s.x, s.y);
+  ctx.scale(d.face, 1);
+  // faisceau
+  var bg = ctx.createLinearGradient(0, 8 * k, 0, 30 * k);
+  bg.addColorStop(0, 'rgba(122,184,255,.35)'); bg.addColorStop(1, 'rgba(122,184,255,0)');
+  ctx.fillStyle = bg;
+  ctx.beginPath(); ctx.moveTo(-6 * k, 8 * k); ctx.lineTo(6 * k, 8 * k); ctx.lineTo(13 * k, 30 * k); ctx.lineTo(-13 * k, 30 * k); ctx.closePath(); ctx.fill();
+  // bras/turbines
+  ctx.fillStyle = '#7d8bb0';
+  roundRect(-20 * k, -4 * k, 40 * k, 5 * k, 2.5 * k); ctx.fill();
+  [-17, 12].forEach(function (ox) {
+    ctx.fillStyle = '#5f6c92';
+    roundRect(ox * k, -8 * k, 9 * k, 7 * k, 3 * k); ctx.fill();
+    ctx.fillStyle = rgba('#7ab8ff', 0.5 + 0.3 * Math.sin(t * 12 + ox));
+    ctx.beginPath(); ctx.ellipse((ox + 4.5) * k, -1 * k, 8 * k, 2.5 * k, 0, 0, 6.2832); ctx.fill();
+  });
+  // châssis
+  ctx.fillStyle = '#c8d3ea';
+  roundRect(-15 * k, -12 * k, 30 * k, 22 * k, 8 * k); ctx.fill();
+  ctx.fillStyle = '#9aa8cc';
+  roundRect(-15 * k, 2 * k, 30 * k, 8 * k, 4 * k); ctx.fill();
+  ctx.fillStyle = '#ff9d3c';
+  ctx.fillRect(-13 * k, 3 * k, 26 * k, 2.5 * k);
+  // visière
+  ctx.beginPath(); ctx.ellipse(2 * k, -3 * k, 9 * k, 7 * k, 0, 0, 6.2832);
+  var vg2 = ctx.createLinearGradient(-7 * k, -10 * k, 10 * k, 4 * k);
+  vg2.addColorStop(0, '#7ee0ff'); vg2.addColorStop(0.5, '#2a5da8'); vg2.addColorStop(1, '#14284f');
+  ctx.fillStyle = vg2; ctx.fill();
+  ctx.beginPath(); ctx.ellipse(-1 * k, -6 * k, 3 * k, 2 * k, -0.5, 0, 6.2832);
+  ctx.fillStyle = 'rgba(255,255,255,.65)'; ctx.fill();
+  // témoin
+  ctx.beginPath(); ctx.arc(-10 * k, -8 * k, 2.2 * k, 0, 6.2832);
+  ctx.fillStyle = rgba('#48e2c6', 0.6 + 0.4 * Math.abs(Math.sin(t * 4))); ctx.fill();
+  ctx.restore();
+  drawCarryStack(d, s.y - 16 * k, s.x);
+}
+
+/* ---------- effets ---------- */
+function drawFX(t) {
+  var i;
+  for (i = 0; i < FX.parts.length; i++) {
+    var p = FX.parts[i];
+    var s = toScreen(p.x, p.y, p.z);
+    var a = 1 - p.t / p.life;
+    ctx.globalAlpha = a;
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(s.x, s.y, p.size * cam.zoom * a, 0, 6.2832); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  for (i = 0; i < FX.rings.length; i++) {
+    var r = FX.rings[i];
+    var f = r.t / r.life;
+    ctx.globalAlpha = (1 - f) * 0.8;
+    discStroke(r.x, r.y, r.z, 0.4 + f * 1.9, r.color, 4 * (1 - f) + 1);
+  }
+  ctx.globalAlpha = 1;
+  for (i = 0; i < FX.floaters.length; i++) {
+    var fl = FX.floaters[i];
+    var s2 = toScreen(fl.x, fl.y, fl.z);
+    var pr = fl.t / fl.life;
+    ctx.globalAlpha = pr < 0.15 ? pr / 0.15 : (1 - pr) / 0.85;
+    ctx.font = '900 ' + (17 * cam.zoom) + 'px "Baloo 2", ui-rounded, Verdana, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.lineWidth = 4 * cam.zoom; ctx.strokeStyle = 'rgba(6,10,24,.85)';
+    ctx.strokeText(fl.text, s2.x, s2.y);
+    ctx.fillStyle = fl.color;
+    ctx.fillText(fl.text, s2.x, s2.y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ---------- assemblage de la scène ---------- */
+var SOLARS = [{ x: 16.2, y: 5.2 }, { x: 16.2, y: 11.4 }, { x: 0.8, y: 8.2 }];
+var ANTENNAS = [{ x: 0.9, y: 12.1 }, { x: 16.3, y: 0.9 }];
+var CRATES = [{ x: 3.9, y: 11.7, t: 3 }, { x: 4.5, y: 12.1, t: 5 }, { x: 3.4, y: 12.2, t: 1 }];
+
+function render(t) {
+  ctx.clearRect(0, 0, W, H);
+  drawSpace(t);
+  drawPlatform(t);
+
+  // barrière lumineuse sur le pourtour
+  var i;
+  for (i = 0; i <= WORLD_W; i += 3.4) {
+    (function (x) { push(x + 0 - 0.2, function () { drawFencePost(x, 0.1, t); }); })(i);
+    (function (x) { push(x + WORLD_H + 0.2, function () { drawFencePost(x, WORLD_H - 0.1, t); }); })(i);
+  }
+  for (i = 0; i <= WORLD_H; i += 3.4) {
+    (function (y) { push(0.1 + y - 0.2, function () { drawFencePost(0.1, y, t); }); })(i);
+    (function (y) { push(WORLD_W + y + 0.2, function () { drawFencePost(WORLD_W - 0.1, y, t); }); })(i);
+  }
+
+  // décor
+  DECOR.rocks.forEach(function (r) { push(r.x + r.y, function () { drawRock(r); }); });
+  DECOR.plants.forEach(function (p) { push(p.x + p.y, function () { drawPlant(p, t); }); });
+  SOLARS.forEach(function (s) { push(s.x + s.y, function () { drawSolar(s.x, s.y, t); }); });
+  ANTENNAS.forEach(function (a) { push(a.x + a.y, function () { drawAntenna(a.x, a.y, t); }); });
+  CRATES.forEach(function (c) { push(c.x + c.y, function () { drawCrate(c.x, c.y, c.t); }); });
+
+  // bâtiments
+  push(REFINERY_IN.x + REFINERY_IN.y, function () { drawHopper(t); });
+  push(REFINERY_POS.x + REFINERY_POS.y - 0.6, function () { drawConveyor(t); });
+  push(REFINERY_OUT.x + REFINERY_OUT.y, function () { drawTray(t); });
+  push(REFINERY_POS.x + REFINERY_POS.y, function () { drawRefineryBody(t); });
+  push(TERMINAL_POS.x + TERMINAL_POS.y, function () { drawTerminal(t); });
+  push(ROCKET_POS.x + ROCKET_POS.y, function () { drawRocket(t); });
+  push(DOME_POS.x + DOME_POS.y, function () { drawDome(t); });
+
+  // socles verrouillés : cadenas + prix
+  S.pads.forEach(function (p) {
+    if (p.unlocked) return;
+    push(p.x + p.y + 0.01, function () {
+      var s = toScreen(p.x, p.y, 0.35 + Math.sin(t * 2 + p.i) * 0.05);
+      ctx.save();
+      ctx.globalAlpha = 0.95;
+      ctx.fillStyle = '#cfe0ff';
+      roundRect(s.x - 11 * cam.zoom, s.y - 9 * cam.zoom, 22 * cam.zoom, 18 * cam.zoom, 4 * cam.zoom); ctx.fill();
+      ctx.strokeStyle = '#cfe0ff'; ctx.lineWidth = 3.5 * cam.zoom;
+      ctx.beginPath(); ctx.arc(s.x, s.y - 9 * cam.zoom, 6.5 * cam.zoom, Math.PI, 0); ctx.stroke();
+      ctx.fillStyle = '#2b3a63';
+      ctx.beginPath(); ctx.arc(s.x, s.y, 3 * cam.zoom, 0, 6.2832); ctx.fill();
+      ctx.restore();
+      var remain = Math.max(0, Math.ceil(p.cost - p.paid));
+      label(p.x, p.y, 1.05, fmt(remain) + ' ◈', {
+        size: 13, color: S.credits > 0 ? '#8affe4' : '#ffd9dd',
+        border: 'rgba(72,226,198,.55)'
+      });
+    });
+  });
+
+  // foreuses
+  S.pads.forEach(function (p) {
+    if (!p.drill) return;
+    if (drag.active && drag.pad === p) return;   // celle qu'on déplace est dessinée au-dessus
+    push(p.x + p.y + 0.02, function () { drawDrill(p, t); });
+  });
+
+  // cristaux au sol
+  S.ores.forEach(function (o) { push(o.x + o.y + 0.03, function () { drawOre(o, t); }); });
+
+  // drones et astronaute
+  S.drones.forEach(function (d) { push(d.x + d.y + 0.05, function () { drawDrone(d, t); }); });
+  push(S.player.x + S.player.y + 0.06, function () { drawAstronaut(S.player, t); });
+
+  flushQ();
+  drawFX(t);
+  flushLabels();
+
+  // foreuse en cours de glissement
+  if (drag.active && drag.pad && drag.pad.drill) {
+    var T = TIERS[drag.pad.drill.tier];
+    var target = padSocketAtScreen(drag.sx, drag.sy);
+    if (target && target !== drag.pad) {
+      var ts = toScreen(target.x, target.y, 0.16);
+      var ok = target.unlocked;
+      var same = ok && target.drill && target.drill.tier === drag.pad.drill.tier && target.drill.tier < MAX_TIER;
+      ctx.globalAlpha = 0.8;
+      discStroke(target.x, target.y, 0.16, 0.7, same ? '#8affe4' : ok ? '#7ab8ff' : '#ff7a8a', 4);
+      if (same) {
+        ctx.fillStyle = '#8affe4';
+        ctx.font = '900 ' + (16 * cam.zoom) + 'px "Baloo 2", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('FUSION !', ts.x, ts.y - 46 * cam.zoom);
+      }
+      ctx.globalAlpha = 1;
+    }
+    ctx.save();
+    ctx.globalAlpha = 0.92;
+    var k = cam.zoom * 1.1;
+    ctx.translate(drag.sx, drag.sy - 18 * k);
+    var gg = ctx.createRadialGradient(0, 0, 2, 0, 0, 46 * k);
+    gg.addColorStop(0, rgba(T.glow, 0.45)); gg.addColorStop(1, rgba(T.glow, 0));
+    ctx.fillStyle = gg; ctx.beginPath(); ctx.arc(0, 0, 46 * k, 0, 6.2832); ctx.fill();
+    ctx.fillStyle = T.body;
+    roundRect(-24 * k, -22 * k, 48 * k, 40 * k, 10 * k); ctx.fill();
+    ctx.fillStyle = sh(T.dark, 0.8);
+    roundRect(-24 * k, 8 * k, 48 * k, 10 * k, 5 * k); ctx.fill();
+    ctx.fillStyle = rgba(T.crystal, 0.95);
+    ctx.beginPath(); ctx.arc(0, -4 * k, 9 * k, 0, 6.2832); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = '800 ' + (12 * k) + 'px "Baloo 2", sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(T.name, 0, 30 * k);
+    ctx.restore();
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 10. INTERFACE (DOM)                                                 */
+/* ------------------------------------------------------------------ */
+var el = function (id) { return document.getElementById(id); };
+var creditsVal = el('creditsVal'), creditsBox = el('creditsBox');
+var carryFill = el('carryFill'), carryLabel = el('carryLabel');
+var overlay = el('overlay'), toastsEl = el('toasts'), hintEl = el('hint');
+var hintTimer = 0, lastCredits = -1, lastCarry = -1, lastCap = -1;
+
+function toast(msg, kind) {
+  var d = document.createElement('div');
+  d.className = 'toast ' + (kind || '');
+  d.textContent = msg;
+  toastsEl.appendChild(d);
+  setTimeout(function () { d.remove(); }, 1900);
+}
+function hint(msg, dur) {
+  if (hintEl.textContent !== msg) hintEl.textContent = msg;
+  hintEl.classList.add('on');
+  hintTimer = Math.max(hintTimer, dur || 1.2);
+}
+function creditsPulse() {
+  creditsBox.classList.remove('pulse');
+  void creditsBox.offsetWidth;
+  creditsBox.classList.add('pulse');
+}
+
+function closeAll() {
+  overlay.classList.remove('on');
+  ['panelShop', 'panelUpgrades', 'panelMenu', 'panelWelcome', 'panelOffline'].forEach(function (id) {
+    el(id).classList.remove('on');
+  });
+}
+function openPanel(id) {
+  closeAll();
+  overlay.classList.add('on');
+  el(id).classList.add('on');
+  Audio_.init();
+}
+overlay.addEventListener('click', closeAll);
+document.addEventListener('click', function (e) {
+  if (e.target.matches('[data-close], .close')) closeAll();
+});
+
+/* ---------- boutique ---------- */
+function freePads() {
+  return S.pads.filter(function (p) { return p.unlocked && !p.drill; }).length;
+}
+function renderShop() {
+  var body = el('shopBody');
+  var cost = shopCost(S.bought);
+  var free = freePads();
+  var canPay = S.credits >= cost;
+  var html = '';
+  html += '<div class="row">' +
+    '<div class="emoji">⛏️</div>' +
+    '<div class="txt"><b>Foreuse ' + TIERS[0].name + '</b>' +
+    '<small>Un cristal de ' + fmt(drillValue(0)) + ' ◈ toutes les ' + drillPeriod(0).toFixed(1) + ' s</small>' +
+    '<div class="val">' + (free
+      ? 'Socles libres : <span class="to">' + free + '</span>'
+      : '<span style="color:#ffc9cf">Aucun socle libre — va en débloquer un</span>') + '</div></div>' +
+    '<button class="buy" id="buyDrill" ' + (canPay && free ? '' : 'disabled') + '>' + fmt(cost) + ' ◈</button>' +
+    '</div>';
+  html += '<p class="panel-sub" style="margin-top:14px">Catalogue des rangs — chaque fusion double presque la valeur du cristal.</p>';
+  for (var i = 0; i <= Math.min(MAX_TIER, S.bestTier + 1); i++) {
+    var T = TIERS[i], owned = S.pads.some(function (p) { return p.drill && p.drill.tier === i; });
+    html += '<div class="row" style="opacity:' + (i <= S.bestTier ? 1 : 0.55) + '">' +
+      '<div class="emoji" style="background:' + rgba(T.glow, 0.18) + ';color:' + T.crystal + '">◆</div>' +
+      '<div class="txt"><b>' + T.name + (owned ? '' : (i <= S.bestTier ? '' : ' — à découvrir')) + '</b>' +
+      '<small>' + fmt(drillValue(i)) + ' ◈ par cristal · un cristal toutes les ' + drillPeriod(i).toFixed(1) + ' s</small></div>' +
+      '</div>';
+  }
+  body.innerHTML = html;
+  var btn = el('buyDrill');
+  if (btn) btn.onclick = function () {
+    var c = shopCost(S.bought);
+    if (S.credits < c) { Audio_.error(); toast('Pas assez de crédits', 'bad'); return; }
+    var target = null;
+    for (var i = 0; i < S.pads.length; i++) if (S.pads[i].unlocked && !S.pads[i].drill) { target = S.pads[i]; break; }
+    if (!target) { Audio_.error(); toast('Aucun socle libre — débloque-en un !', 'bad'); return; }
+    S.credits -= c; S.bought++;
+    target.drill = { tier: 0, timer: 0, pulse: 1, spin: 0 };
+    target.pop = 1;
+    Audio_.buy();
+    burst(target.x, target.y, 0.6, TIERS[0].glow, 18, 1.1);
+    floater(target.x, target.y, 1.5, 'Mk-I livrée !', '#8affe4');
+    toast('Foreuse installée 🛠️', 'good');
+    save(); renderShop();
+  };
+}
+
+/* ---------- améliorations ---------- */
+function renderUpgrades() {
+  var body = el('upgradesBody');
+  var html = '';
+  UPGRADES.forEach(function (u) {
+    var lvl = S.up[u.id];
+    var maxed = lvl >= u.max;
+    var cost = u.cost(lvl);
+    var cur = '', nxt = '';
+    if (u.id === 'speed') { cur = (3.5 + 0.55 * lvl).toFixed(1); nxt = (3.5 + 0.55 * (lvl + 1)).toFixed(1); cur += ' m/s'; nxt += ' m/s'; }
+    if (u.id === 'capacity') { cur = (8 + 5 * lvl) + ' objets'; nxt = (8 + 5 * (lvl + 1)) + ' objets'; }
+    if (u.id === 'refinery') { cur = (1 / (0.55 * Math.pow(0.82, lvl))).toFixed(1) + '/s'; nxt = (1 / (0.55 * Math.pow(0.82, lvl + 1))).toFixed(1) + '/s'; }
+    if (u.id === 'drones') { cur = lvl + ' drone' + (lvl > 1 ? 's' : ''); nxt = (lvl + 1) + ' drone' + (lvl + 1 > 1 ? 's' : ''); }
+    var pips = '<div class="pips">';
+    for (var i = 0; i < u.max; i++) pips += '<span class="pip' + (i < lvl ? ' on' : '') + '"></span>';
+    pips += '</div>';
+    html += '<div class="row">' +
+      '<div class="emoji">' + u.icon + '</div>' +
+      '<div class="txt"><b>' + u.name + '</b><small>' + u.desc + '</small>' +
+      '<div class="val">' + cur + (maxed ? '' : '<span class="arrow">→</span><span class="to">' + nxt + '</span>') + '</div>' +
+      pips + '</div>' +
+      (maxed
+        ? '<button class="buy max" disabled>MAX</button>'
+        : '<button class="buy" data-up="' + u.id + '"' + (S.credits >= cost ? '' : ' disabled') + '>' + fmt(cost) + ' ◈</button>') +
+      '</div>';
+  });
+  body.innerHTML = html;
+  Array.prototype.forEach.call(body.querySelectorAll('[data-up]'), function (b) {
+    b.onclick = function () {
+      var id = b.getAttribute('data-up');
+      var u = null;
+      UPGRADES.forEach(function (x) { if (x.id === id) u = x; });
+      if (!u) return;
+      var lvl = S.up[id], cost = u.cost(lvl);
+      if (lvl >= u.max) return;
+      if (S.credits < cost) { Audio_.error(); toast('Pas assez de crédits', 'bad'); return; }
+      S.credits -= cost; S.up[id] = lvl + 1;
+      Audio_.buy(); toast(u.name + ' — niveau ' + (lvl + 1), 'good');
+      creditsPulse(); save(); renderUpgrades();
+    };
+  });
+}
+
+/* ---------- menu ---------- */
+function renderMenu() {
+  var h = Math.floor(S.playTime / 3600), m = Math.floor((S.playTime % 3600) / 60);
+  el('menuBody').innerHTML =
+    '<div class="stat-grid">' +
+    '<div class="stat"><b>' + fmt(S.totalEarned) + ' ◈</b><small>crédits gagnés</small></div>' +
+    '<div class="stat"><b>' + fmt(S.totalMined) + '</b><small>cristaux extraits</small></div>' +
+    '<div class="stat"><b>' + TIERS[S.bestTier].name + '</b><small>meilleur rang</small></div>' +
+    '<div class="stat"><b>' + h + 'h ' + m + 'm</b><small>temps de mission</small></div>' +
+    '</div>' +
+    '<button class="menu-btn" id="mHow">📖 Comment jouer</button>' +
+    '<button class="menu-btn" id="mSound">' + (Audio_.on ? '🔊 Son : activé' : '🔇 Son : coupé') + '</button>' +
+    '<button class="menu-btn danger" id="mReset">♻️ Nouvelle partie</button>' +
+    '<p class="panel-sub" style="text-align:center;margin:6px 0 0">Astro Base Tycoon v1.0 — sauvegarde automatique</p>';
+  el('mHow').onclick = function () { openPanel('panelWelcome'); };
+  el('mSound').onclick = function () { toggleSound(); renderMenu(); };
+  el('mReset').onclick = function () {
+    if (!confirm('Effacer la base et recommencer à zéro ?')) return;
+    try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
+    S.credits = 0; S.up = { speed: 0, capacity: 0, refinery: 0, drones: 0 };
+    S.bought = 0; S.totalEarned = 0; S.totalMined = 0; S.bestTier = 0; S.playTime = 0;
+    initWorld(); closeAll(); toast('Nouvelle base initialisée 🚀', 'good');
+  };
+}
+
+function toggleSound() {
+  Audio_.on = !Audio_.on;
+  el('btnSound').textContent = Audio_.on ? '🔊' : '🔇';
+  try { localStorage.setItem(SAVE_KEY + '-sound', Audio_.on ? '1' : '0'); } catch (e) {}
+}
+
+el('btnShop').onclick = function () { renderShop(); openPanel('panelShop'); };
+el('btnUpgrades').onclick = function () { renderUpgrades(); openPanel('panelUpgrades'); };
+el('btnMenu').onclick = function () { renderMenu(); openPanel('panelMenu'); };
+el('btnSound').onclick = function () { Audio_.init(); toggleSound(); };
+el('btnPlay').onclick = function () { closeAll(); S.started = true; Audio_.init(); };
+
+function updateHUD(dt) {
+  if (S.credits !== lastCredits) {
+    lastCredits = S.credits;
+    creditsVal.textContent = fmt(S.credits);
+  }
+  var cap = playerCap(), n = S.player.carry.length;
+  if (n !== lastCarry || cap !== lastCap) {
+    lastCarry = n; lastCap = cap;
+    carryFill.style.width = (n / cap * 100) + '%';
+    carryLabel.textContent = n + ' / ' + cap + (S.player.carryType === 'chip' ? ' ◈' : ' ◆');
+  }
+  if (hintTimer > 0) { hintTimer -= dt; if (hintTimer <= 0) hintEl.classList.remove('on'); }
+  // met en évidence la boutique quand un socle est libre et abordable
+  var shopBtn = el('btnShop');
+  var can = freePads() > 0 && S.credits >= shopCost(S.bought);
+  if (can !== shopBtn.classList.contains('glow')) shopBtn.classList.toggle('glow', can);
+}
+
+/* ------------------------------------------------------------------ */
+/* 11. BOUCLE PRINCIPALE                                               */
+/* ------------------------------------------------------------------ */
+var last = 0, saveTimer = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  var dt = Math.min((now - last) / 1000, 0.05);
+  if (!last) dt = 0.016;
+  last = now;
+  var t = now / 1000;
+
+  if (S.started) {
+    update(dt);
+    saveTimer += dt;
+    if (saveTimer > 8) { saveTimer = 0; save(); }
+  } else {
+    updateFX(dt);
+    updatePads(dt);
+    cam.x = lerp(cam.x, S.player.x, 0.02);
+    cam.y = lerp(cam.y, S.player.y, 0.02);
+  }
+  render(t);
+  updateHUD(dt);
+}
+
+/* ------------------------------------------------------------------ */
+/* 12. DÉMARRAGE                                                       */
+/* ------------------------------------------------------------------ */
+function boot() {
+  buildDecor();
+  initWorld();
+  var had = load();
+  try {
+    var sp = localStorage.getItem(SAVE_KEY + '-sound');
+    if (sp === '0') { Audio_.on = false; el('btnSound').textContent = '🔇'; }
+  } catch (e) {}
+  resize();
+
+  if (had) {
+    var gain = offlineGains();
+    S.started = true;
+    if (gain > 0) {
+      S.credits += gain; S.totalEarned += gain;
+      el('offlineText').innerHTML = 'Pendant ton absence, la base a produit<br><b style="font-size:26px;color:#8affe4">' + fmt(gain) + ' ◈</b>';
+      openPanel('panelOffline');
+    }
+  } else {
+    openPanel('panelWelcome');
+  }
+  requestAnimationFrame(frame);
+}
+
+window.addEventListener('beforeunload', save);
+document.addEventListener('visibilitychange', function () { if (document.hidden) save(); });
+
+boot();
+
+/* API de debug (tests automatisés & bac à sable) */
+window.AstroBase = {
+  S: S, TIERS: TIERS, FX: FX, cam: cam,
+  fmt: fmt, save: save,
+  start: function () { S.started = true; closeAll(); },
+  tp: function (x, y) { S.player.x = x; S.player.y = y; cam.x = x; cam.y = y; },
+  give: function (n) { S.credits += n; },
+  pads: function () { return S.pads; },
+  setTier: function (i, tier) { if (S.pads[i]) { S.pads[i].unlocked = true; S.pads[i].drill = { tier: tier, timer: 0, pulse: 0, spin: 0 }; } }
+};
+
+})();

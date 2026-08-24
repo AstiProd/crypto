@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Astro Base Tycoon</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <canvas id="game"></canvas>
+
+  <!-- ============ HUD ============ -->
+  <div id="hud">
+    <div class="top-bar">
+      <div class="credits" id="creditsBox">
+        <span class="chip">◈</span><span id="creditsVal">0</span>
+      </div>
+      <div class="top-right">
+        <button class="icon-btn" id="btnSound" title="Son">🔊</button>
+        <button class="icon-btn" id="btnMenu" title="Menu">⋯</button>
+      </div>
+    </div>
+
+    <div class="carry-bar" id="carryBar">
+      <div class="carry-fill" id="carryFill"></div>
+      <span id="carryLabel">0 / 8</span>
+    </div>
+
+    <div class="bottom-bar">
+      <button class="action-btn" id="btnShop"><span class="ico">🛰️</span><span>Foreuses</span></button>
+      <button class="action-btn" id="btnUpgrades"><span class="ico">⚡</span><span>Améliorations</span></button>
+    </div>
+
+    <div id="joystick" class="joystick">
+      <div class="joy-base"></div>
+      <div class="joy-knob" id="joyKnob"></div>
+    </div>
+
+    <div id="toasts"></div>
+    <div id="hint" class="hint"></div>
+  </div>
+
+  <!-- ============ PANELS ============ -->
+  <div class="overlay" id="overlay"></div>
+
+  <div class="panel" id="panelShop">
+    <div class="panel-head">
+      <h2>Atelier de foreuses</h2>
+      <button class="close" data-close>✕</button>
+    </div>
+    <p class="panel-sub">Achète une foreuse Mk-I et pose-la sur un socle libre. Fusionne deux foreuses identiques pour monter d'un rang.</p>
+    <div id="shopBody"></div>
+  </div>
+
+  <div class="panel" id="panelUpgrades">
+    <div class="panel-head">
+      <h2>Améliorations</h2>
+      <button class="close" data-close>✕</button>
+    </div>
+    <p class="panel-sub">Investis tes crédits pour accélérer toute la base.</p>
+    <div id="upgradesBody"></div>
+  </div>
+
+  <div class="panel" id="panelMenu">
+    <div class="panel-head">
+      <h2>Menu</h2>
+      <button class="close" data-close>✕</button>
+    </div>
+    <div id="menuBody"></div>
+  </div>
+
+  <div class="panel" id="panelWelcome">
+    <div class="panel-head">
+      <h2>Astro Base Tycoon</h2>
+    </div>
+    <div class="welcome">
+      <p class="big">Kepler-442 b — an 2187.</p>
+      <ol class="steps">
+        <li><b>Déplace</b> l'astronaute : joystick (mobile) ou <b>ZQSD / WASD / flèches</b>.</li>
+        <li><b>Ramasse</b> les cristaux sous les foreuses, ils s'empilent sur ton dos.</li>
+        <li><b>Dépose-les</b> à la <b>raffinerie</b>, récupère les puces de crédit.</li>
+        <li><b>Encaisse</b> au <b>terminal</b> pour convertir en crédits ◈.</li>
+        <li><b>Reste sur un socle verrouillé</b> pour l'acheter, puis <b>glisse une foreuse sur une autre</b> du même rang pour fusionner.</li>
+      </ol>
+      <button class="cta" id="btnPlay">Décoller 🚀</button>
+    </div>
+  </div>
+
+  <div class="panel" id="panelOffline">
+    <div class="panel-head"><h2>Rapport de mission</h2></div>
+    <div class="welcome">
+      <p class="big" id="offlineText"></p>
+      <button class="cta" data-close>Récupérer</button>
+    </div>
+  </div>
+</div>
+<script src="game.js"></script>
+</body>
+</html>
