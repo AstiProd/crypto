@@ -1135,12 +1135,14 @@ function drawDrill(p, t) {
 }
 
 /* ---------- cristal ---------- */
-function drawCrystalShape(sx, sy, k, T, alpha) {
+function drawCrystalShape(sx, sy, k, T, alpha, glow) {
   ctx.save();
   ctx.globalAlpha = alpha === undefined ? 1 : alpha;
-  var g = ctx.createRadialGradient(sx, sy - k * 0.3, 1, sx, sy - k * 0.3, k * 3);
-  g.addColorStop(0, rgba(T.glow, 0.55)); g.addColorStop(1, rgba(T.glow, 0));
-  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(sx, sy - k * 0.3, k * 3, 0, 6.2832); ctx.fill();
+  if (glow !== false) {
+    var g = ctx.createRadialGradient(sx, sy - k * 0.3, 1, sx, sy - k * 0.3, k * 3);
+    g.addColorStop(0, rgba(T.glow, 0.55)); g.addColorStop(1, rgba(T.glow, 0));
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(sx, sy - k * 0.3, k * 3, 0, 6.2832); ctx.fill();
+  }
 
   ctx.beginPath();                                   // facette gauche
   ctx.moveTo(sx, sy - k * 1.75); ctx.lineTo(sx - k, sy - k * 0.25); ctx.lineTo(sx, sy + k * 1.0); ctx.closePath();
@@ -1509,7 +1511,7 @@ function drawCarryStack(a, topY, sx) {
     var y = topY - i * step;
     var wob = Math.sin(a.bob * 0.9 + i * 0.5) * (0.6 + i * 0.12) * cam.zoom;
     if (a.carryType === 'chip') drawChip(sx + wob, y, 10 * cam.zoom);
-    else drawCrystalShape(sx + wob, y + 6 * cam.zoom, 8 * cam.zoom, TIERS[a.carry[i].tier]);
+    else drawCrystalShape(sx + wob, y + 6 * cam.zoom, 8 * cam.zoom, TIERS[a.carry[i].tier], 1, i === shown - 1);
   }
   if (n > shown) {
     ctx.fillStyle = '#fff';
@@ -2168,6 +2170,8 @@ window.AstroBase = {
   fmt: fmt, save: save,
   start: function () { S.started = true; closeAll(); },
   tp: function (x, y) { S.player.x = x; S.player.y = y; cam.x = x; cam.y = y; },
+  pos: { refineryIn: REFINERY_IN, refineryOut: REFINERY_OUT, terminal: TERMINAL_POS, pad: padPos },
+  goto: function (name) { var p = this.pos[name]; if (p) this.tp(p.x, p.y); },
   give: function (n) { S.credits += n; },
   pads: function () { return S.pads; },
   setTier: function (i, tier) { if (S.pads[i]) { S.pads[i].unlocked = true; S.pads[i].drill = { tier: tier, timer: 0, pulse: 0, spin: 0 }; } }
