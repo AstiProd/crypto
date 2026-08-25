@@ -1333,9 +1333,10 @@ function carryValue(a) {
 function updateCarrier(a, dt, cfg) {
   a.actTimer -= dt;
   var cap = cfg.cap, R = 1.25 * 1.25;
+  var canTake = cfg.mode !== 'deliver';        // en livraison : dépôt uniquement
 
   /* 1. ramasser les cristaux au sol */
-  if ((!a.carryType || a.carryType === 'ore') && a.carry.length < cap) {
+  if (canTake && (!a.carryType || a.carryType === 'ore') && a.carry.length < cap) {
     var best = -1, bestD = R;
     for (var i = 0; i < S.ores.length; i++) {
       var o = S.ores[i];
@@ -1367,7 +1368,7 @@ function updateCarrier(a, dt, cfg) {
   }
 
   /* 3. prendre les puces de crédit sur le plateau de sortie */
-  if ((!a.carryType || a.carryType === 'chip') && a.carry.length < cap &&
+  if (canTake && (!a.carryType || a.carryType === 'chip') && a.carry.length < cap &&
       S.refinery.tray.length && dist2(a.x, a.y, REFINERY_OUT.x, REFINERY_OUT.y) < 1.5 * 1.5 &&
       a.actTimer <= 0) {
     var chip = S.refinery.tray.pop();
@@ -1624,7 +1625,8 @@ function claimableContracts() {
   return n;
 }
 
-/* IA des drones : les pairs minent, les impairs convoient les crédits */
+/* IA des drones : les pairs minent, les impairs convoient les crédits.
+   Machine à états : un drone ne repart chercher qu'une fois sa soute VIDE. */
 function updateDrones(dt) {
   var want = droneCount();
   while (S.drones.length < want) S.drones.push(newDrone(S.drones.length));
@@ -1634,25 +1636,33 @@ function updateDrones(dt) {
     var d = S.drones[i];
     var isMiner = (i % 2 === 0);
     var cap = 5 + S.up.capacity;
-    var tx = null, ty = null;
+    if (!d.mode) d.mode = 'gather';
 
-    if (isMiner) {
-      if (d.carry.length >= cap || (d.carry.length && !S.ores.length)) {
-        tx = REFINERY_IN.x; ty = REFINERY_IN.y;
-      } else if (S.ores.length) {
-        var best = null, bd = 1e9;
-        for (var k = 0; k < S.ores.length; k++) {
-          var o = S.ores[k], dd = dist2(d.x, d.y, o.x, o.y);
-          if (dd < bd) { bd = dd; best = o; }
-        }
-        if (best) { tx = best.x; ty = best.y; }
-      } else { tx = REFINERY_IN.x - 1.6; ty = REFINERY_IN.y - 0.6; }
+    /* --- transitions --- */
+    if (d.mode === 'gather') {
+      var noSource = isMiner ? !S.ores.length : !S.refinery.tray.length;
+      // plein, ou plus rien à charger : on part livrer
+      if (d.carry.length >= cap || (d.carry.length && noSource)) d.mode = 'deliver';
+    } else if (!d.carry.length) {
+      d.mode = 'gather';                      // soute vide : on peut repartir
+    }
+
+    /* --- destination --- */
+    var tx, ty;
+    if (d.mode === 'deliver') {
+      if (isMiner) { tx = REFINERY_IN.x; ty = REFINERY_IN.y; }
+      else { tx = MARKET_POS.x; ty = MARKET_POS.y - 0.1; }
+    } else if (isMiner) {
+      var best = null, bd = 1e9;
+      for (var k = 0; k < S.ores.length; k++) {
+        var o = S.ores[k], dd = dist2(d.x, d.y, o.x, o.y);
+        if (dd < bd) { bd = dd; best = o; }
+      }
+      if (best) { tx = best.x; ty = best.y; }
+      else { tx = REFINERY_IN.x - 1.6; ty = REFINERY_IN.y - 0.6; }   // attente
     } else {
-      if (d.carry.length >= cap || (d.carry.length && !S.refinery.tray.length)) {
-        tx = TERMINAL_POS.x; ty = TERMINAL_POS.y - 0.1;
-      } else if (S.refinery.tray.length) {
-        tx = REFINERY_OUT.x; ty = REFINERY_OUT.y;
-      } else { tx = TERMINAL_POS.x + 1.5; ty = TERMINAL_POS.y - 0.4; }
+      if (S.refinery.tray.length) { tx = REFINERY_OUT.x; ty = REFINERY_OUT.y; }
+      else { tx = MARKET_POS.x + 1.6; ty = MARKET_POS.y - 0.5; }     // attente
     }
 
     var dx = tx - d.x, dy = ty - d.y;
@@ -1660,7 +1670,8 @@ function updateDrones(dt) {
     if (len > 0.35) moveActor(d, dx, dy, droneSpeed(), dt);
     else d.moving = false;
     d.bob += dt * 3;
-    updateCarrier(d, dt, { cap: cap, rate: 0.11, sound: false });
+    // en livraison le drone ne ramasse rien : il vide sa soute d'abord
+    updateCarrier(d, dt, { cap: cap, rate: 0.11, sound: false, mode: d.mode });
   }
 }
 
@@ -2885,9 +2896,10 @@ function drawDrone(d, t) {
   ctx.fillStyle = vg2; ctx.fill();
   ctx.beginPath(); ctx.ellipse(-1 * k, -6 * k, 3 * k, 2 * k, -0.5, 0, 6.2832);
   ctx.fillStyle = 'rgba(255,255,255,.65)'; ctx.fill();
-  // témoin
+  // témoin : vert en collecte, ambre en livraison
+  var lampe = d.mode === 'deliver' ? '#ffca3a' : '#48e2c6';
   ctx.beginPath(); ctx.arc(-10 * k, -8 * k, 2.2 * k, 0, 6.2832);
-  ctx.fillStyle = rgba('#48e2c6', 0.6 + 0.4 * Math.abs(Math.sin(t * 4))); ctx.fill();
+  ctx.fillStyle = rgba(lampe, 0.6 + 0.4 * Math.abs(Math.sin(t * 4))); ctx.fill();
   ctx.restore();
   drawCarryStack(d, s.y - 16 * k, s.x);
 }
