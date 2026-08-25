@@ -33,7 +33,8 @@
 
     <div class="bottom-bar">
       <button class="action-btn" id="btnShop"><span class="ico">🛰️</span><span>Foreuses</span></button>
-      <button class="action-btn" id="btnUpgrades"><span class="ico">⚡</span><span>Améliorations</span></button>
+      <button class="action-btn" id="btnContracts"><span class="ico">📋</span><span>Contrats</span><span class="badge" id="contractBadge">0</span></button>
+      <button class="action-btn" id="btnUpgrades"><span class="ico">⚡</span><span>Base</span></button>
     </div>
 
     <button class="rw-btn" id="btnBoost" type="button">
@@ -70,6 +71,15 @@
     <div id="upgradesBody"></div>
   </div>
 
+  <div class="panel" id="panelContracts">
+    <div class="panel-head">
+      <h2>Contrats de livraison</h2>
+      <button class="close" data-close>✕</button>
+    </div>
+    <p class="panel-sub">Vends des cristaux au marché pour honorer les commandes. Le cours du jour s'applique à chaque vente.</p>
+    <div id="contractsBody"></div>
+  </div>
+
   <div class="panel" id="panelMenu">
     <div class="panel-head">
       <h2>Menu</h2>
@@ -90,6 +100,9 @@
         <li><b>Dépose-les</b> à la <b>raffinerie</b>, récupère les puces de crédit.</li>
         <li><b>Encaisse</b> au <b>terminal</b> pour convertir en crédits ◈.</li>
         <li><b>Reste sur un socle verrouillé</b> pour l'acheter, puis <b>glisse une foreuse sur une autre</b> du même rang pour fusionner.</li>
+        <li><b>Ouvre de nouvelles zones</b> — la soute de la fusée, la serre — en te posant sur leur dalle 🔒.</li>
+        <li><b>Achète des convoyeurs</b> (bouton <b>Base</b>) : ils acheminent et vendent à ta place, même hors ligne.</li>
+        <li><b>Honore les contrats</b> pour de grosses primes, et surveille le <b>cours du marché</b>.</li>
       </ol>
       <button class="cta" id="btnPlay">Décoller 🚀</button>
     </div>

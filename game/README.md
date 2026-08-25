@@ -87,9 +87,40 @@ npm run ios          # ouvre Xcode (nécessite un Mac)
 - `store/data-safety.md` — réponses aux questionnaires de collecte de données
 - `store/screenshots/` — captures aux formats exigés (`node tools/make-screenshots.js`)
 
+## Zones, logistique et marché
+
+**Trois zones** composent la base. La zone minière est ouverte dès le départ ; les deux
+autres s'achètent en se posant sur leur dalle 🔒, comme les socles.
+
+| Zone | Prix | Apport |
+| --- | --- | --- |
+| Zone minière | — | 10 socles bien espacés, à ciel ouvert |
+| **Soute ASTRA-1** | 25 K ◈ | la soute de la fusée s'ouvre en coupe : 3 socles à l'abri |
+| **Serre hydroponique** | 400 K ◈ | le dôme se pressurise : 3 socles sous verre |
+
+Ouvrir une zone offre son premier socle, équipé d'une foreuse calée sur ton meilleur rang.
+
+**Trois lignes d'approvisionnement** automatisent le transport. Chacune monte jusqu'au
+niveau 5 (0,45 colis/s par niveau) et se voit à l'écran : tapis, chevrons animés et colis
+qui glissent dessus.
+
+| Ligne | Rôle |
+| --- | --- |
+| Mine → Raffinerie | ramasse les cristaux de la zone minière et les verse dans la trémie |
+| Soute → Raffinerie | idem depuis la soute (nécessite la zone) |
+| Raffinerie → Marché | emporte les puces et les vend toutes seules |
+
+**Le marché** remplace le terminal : chaque vente est multipliée par le **cours des
+cristaux**, qui dérive lentement entre ×0,82 et ×1,38 et s'affiche sur le bâtiment.
+
+**Les contrats** donnent des objectifs : trois commandes du type « 24 cristaux Mk-V ou
+mieux » progressent à chaque vente et rapportent environ trois fois la valeur des
+marchandises. Une commande honorée est remplacée aussitôt, calée sur ton meilleur rang.
+
 ## Contenu
 
-- 10 socles d'extraction, 10 rangs de foreuses avec palettes distinctes
+- 16 socles d'extraction répartis en 3 zones, 10 rangs de foreuses aux palettes distinctes
+- 3 lignes d'approvisionnement, marché à cours variable et contrats de livraison
 - Raffinerie (file d'attente, cuves, tapis roulant, plateau de sortie), terminal de crédits
 - 4 améliorations : bottes propulsées, sac dorsal, raffinerie, **drones ouvriers** (jusqu'à 4
   assistants autonomes : les pairs minent, les impairs convoient les crédits)
@@ -105,7 +136,7 @@ npm run ios          # ouvre Xcode (nécessite un Mac)
 | 1–2 | Constantes, équilibrage, formatage des grands nombres, audio WebAudio |
 | 3–4 | État du jeu, implantation de la base, sauvegarde / chargement / hors-ligne |
 | 5–6 | Effets, entrées (clavier, joystick flottant, glisser-déposer de fusion) |
-| 7 | Simulation : déplacement + collisions, porteurs, socles, raffinerie, IA des drones |
+| 7 | Simulation : déplacement + collisions, porteurs, socles, raffinerie, convoyeurs, marché, contrats, IA des drones |
 | 8–9 | Rendu : primitives isométriques (cuboïdes, cylindres, disques), décor procédural |
 | 10–12 | Interface DOM, boucle principale, démarrage |
 
@@ -118,5 +149,5 @@ par profondeur `x + y` avant dessin, étiquettes rendues en dernier.
 
 ### Console de debug
 
-`window.AstroBase` expose `S`, `tp(x, y)`, `give(n)`, `setTier(socle, rang)`, `save()` —
-pratique pour tester ou faire des captures.
+`window.AstroBase` expose `S`, `tp(x, y)`, `goto('market')`, `give(n)`, `setTier(socle, rang)`,
+`pos`, `zones`, `lines`, `save()` — pratique pour tester ou faire des captures.

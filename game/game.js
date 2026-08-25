@@ -15,7 +15,7 @@ var TILE_H = 44;          // hauteur d'une tuile projetée (iso 2:1)
 var H_UNIT = 46;          // pixels par unité de hauteur
 var SAVE_KEY = 'astro-base-tycoon-v1';
 var MAX_TIER = 9;         // index max (rang 10)
-var PAD_COUNT = 10;
+var PAD_COUNT = 16;          // 10 dans la mine, 3 dans la soute, 3 sous la serre
 
 var clamp = function (v, a, b) { return v < a ? a : v > b ? b : v; };
 var lerp = function (a, b, t) { return a + (b - a) * t; };
@@ -51,7 +51,11 @@ var TIERS = [
 /* Équilibrage */
 function drillValue(t) { return Math.round(5 * Math.pow(2.15, t)); }      // valeur d'un cristal
 function drillPeriod(t) { return 4.6 * Math.pow(0.93, t); }               // secondes entre deux cristaux
-function padCost(i) { return Math.round(60 * Math.pow(2.4, i - 1)); }     // prix du socle n°i
+function padCost(i) {                                                    // prix du socle n°i
+  if (i < 10) return Math.round(60 * Math.pow(2.4, i - 1));              // mine à ciel ouvert
+  if (i < 13) return Math.round(40000 * Math.pow(2.5, i - 10));          // soute
+  return Math.round(700000 * Math.pow(2.5, i - 13));                     // serre
+}
 function shopCost(bought) { return Math.round(80 * Math.pow(1.75, bought)); }
 
 var UPGRADES = [
@@ -121,24 +125,92 @@ var S = {
   lastSeen: Date.now(),
   started: false,
   boost: 0,              // secondes restantes de recettes doublées (pub récompensée)
-  pendingOffline: 0      // montant hors-ligne, doublable une fois par pub
+  pendingOffline: 0,     // montant hors-ligne, doublable une fois par pub
+  zones: { mine: true, bay: false, dome: false },
+  zonePaid: { bay: 0, dome: 0 },
+  lines: { mine: 0, bay: 0, market: 0 },   // niveaux des lignes d'approvisionnement
+  transit: [],           // colis en cours de convoyage
+  contracts: [],         // commandes en cours
+  contractSeed: 0,
+  market: 1              // cours des cristaux (multiplicateur de vente)
 };
 
 var FX = { floaters: [], parts: [], rings: [] };
 var cam = { x: 7.5, y: 7.5, zoom: 1 };
 
 /* Position des socles : deux rangées dans la zone minière */
+/* Emplacement des socles : 10 dans la mine à ciel ouvert, puis les zones */
+var BAY_PADS = [{ x: 5.9, y: 12.3 }, { x: 8.5, y: 12.3 }, { x: 7.2, y: 14.4 }];
+var GREENHOUSE_PADS = [{ x: 19.2, y: 2.6 }, { x: 21.2, y: 2.6 }, { x: 20.2, y: 4.4 }];
 function padPos(i) {
-  var col = i % 5, row = (i / 5) | 0;
-  return { x: 2.4 + col * 2.85, y: 1.7 + row * 2.75 };
+  if (i < 10) {
+    var col = i % 5, row = (i / 5) | 0;
+    return { x: 2.6 + col * 3.3, y: 2.2 + row * 3.4 };   // socles bien espacés
+  }
+  if (i < 13) return BAY_PADS[i - 10];
+  return GREENHOUSE_PADS[i - 13];
 }
 
-var REFINERY_POS = { x: 13.9, y: 8.35 };
-var REFINERY_IN  = { x: 14.9, y: 9.85 };
-var REFINERY_OUT = { x: 12.75, y: 9.8 };
-var TERMINAL_POS = { x: 7.2, y: 10.7 };
-var ROCKET_POS   = { x: 2.2, y: 9.9 };
-var DOME_POS     = { x: 15.4, y: 3.0 };
+var REFINERY_POS = { x: 18.8, y: 10.6 };
+var REFINERY_IN  = { x: 19.9, y: 12.1 };
+var REFINERY_OUT = { x: 17.6, y: 12.1 };
+var MARKET_POS   = { x: 12.0, y: 14.2 };
+var TERMINAL_POS = MARKET_POS;                 // le terminal est devenu le marché
+var ROCKET_POS   = { x: 3.2, y: 11.0 };
+var DOME_POS     = { x: 20.2, y: 3.4 };
+var BAY_RECT     = { x0: 4.6, y0: 11.2, x1: 9.8, y1: 15.4 };
+var BAY_DOOR     = { x: 10.5, y: 11.9 };       // rampe d'accès : on se pose dessus pour acheter
+var DOME_DOOR    = { x: 20.2, y: 6.5 };
+
+/* Zones débloquables : elles ouvrent de nouveaux socles */
+var ZONES = [
+  { id: 'mine', name: 'Zone minière', cost: 0, pads: [0,1,2,3,4,5,6,7,8,9], door: null },
+  { id: 'bay',  name: 'Soute ASTRA-1', cost: 25000, pads: [10,11,12], door: BAY_DOOR,
+    desc: 'Ouvre la soute de la fusée : trois socles à l\'abri.' },
+  { id: 'dome', name: 'Serre hydroponique', cost: 400000, pads: [13,14,15], door: DOME_DOOR,
+    desc: 'Le dôme se pressurise : trois socles de plus sous verre.' }
+];
+
+/* Lignes d'approvisionnement : tracés suivis par les colis */
+var LINES = [
+  { id: 'mine', name: 'Convoyeur Mine → Raffinerie', zone: 'mine', carries: 'ore',
+    base: 3000, icon: '⛏️',
+    path: [{ x: 10.5, y: 8.7 }, { x: 21.2, y: 8.7 }, { x: 21.2, y: 12.3 }, { x: 20.1, y: 12.3 }] },
+  { id: 'bay', name: 'Convoyeur Soute → Raffinerie', zone: 'bay', carries: 'ore',
+    base: 22000, icon: '🚀',
+    path: [{ x: 10.1, y: 12.0 }, { x: 16.4, y: 12.0 }, { x: 16.4, y: 10.0 }, { x: 21.2, y: 10.0 }, { x: 21.2, y: 12.2 }, { x: 20.1, y: 12.3 }] },
+  { id: 'market', name: 'Convoyeur Raffinerie → Marché', zone: 'mine', carries: 'chip',
+    base: 9000, icon: '💠',
+    path: [{ x: 17.4, y: 12.9 }, { x: 17.4, y: 15.6 }, { x: 12.6, y: 15.6 }, { x: 12.2, y: 14.9 }] }
+];
+var LINE_MAX = 5;
+function lineCost(l) { return Math.round(l.base * Math.pow(3, S.lines[l.id])); }
+function lineRate(id) { return S.lines[id] * 0.45; }        // colis par seconde
+function lineLength(l) {
+  var d = 0;
+  for (var i = 1; i < l.path.length; i++) d += Math.hypot(l.path[i].x - l.path[i-1].x, l.path[i].y - l.path[i-1].y);
+  return d;
+}
+/* Position d'un colis le long du tracé (0 → 1) */
+function pointOnLine(l, t) {
+  var total = lineLength(l), want = t * total, acc = 0;
+  for (var i = 1; i < l.path.length; i++) {
+    var a = l.path[i-1], b = l.path[i];
+    var seg = Math.hypot(b.x - a.x, b.y - a.y);
+    if (acc + seg >= want || i === l.path.length - 1) {
+      var k = seg > 0 ? clamp((want - acc) / seg, 0, 1) : 1;
+      return { x: lerp(a.x, b.x, k), y: lerp(a.y, b.y, k) };
+    }
+    acc += seg;
+  }
+  return l.path[l.path.length - 1];
+}
+function lineById(id) { for (var i = 0; i < LINES.length; i++) if (LINES[i].id === id) return LINES[i]; return null; }
+
+function zoneOf(padIndex) {
+  for (var i = 0; i < ZONES.length; i++) if (ZONES[i].pads.indexOf(padIndex) >= 0) return ZONES[i];
+  return ZONES[0];
+}
 
 function newPlayer() {
   return {
@@ -158,7 +230,7 @@ function initWorld() {
   for (var i = 0; i < PAD_COUNT; i++) {
     var p = padPos(i);
     S.pads.push({
-      i: i, x: p.x, y: p.y,
+      i: i, x: p.x, y: p.y, zone: zoneOf(i).id,
       unlocked: i === 0,
       cost: i === 0 ? 0 : padCost(i),
       paid: 0,
@@ -166,6 +238,13 @@ function initWorld() {
       pop: 0
     });
   }
+  S.zones = { mine: true, bay: false, dome: false };
+  S.zonePaid = { bay: 0, dome: 0 };
+  S.lines = { mine: 0, bay: 0, market: 0 };
+  S.transit = [];
+  S.contracts = [];
+  S.contractSeed = 0;
+  S.market = 1;
   S.ores = [];
   S.player = newPlayer();
   S.drones = [];
@@ -188,6 +267,12 @@ function save() {
       bestTier: S.bestTier,
       playTime: S.playTime,
       boost: S.boost,
+      zones: S.zones,
+      zonePaid: S.zonePaid,
+      lines: S.lines,
+      contracts: S.contracts,
+      contractSeed: S.contractSeed,
+      market: S.market,
       ads: window.Ads ? window.Ads.serialize() : null,
       lastSeen: Date.now(),
       pads: S.pads.map(function (p) {
@@ -214,6 +299,12 @@ function load() {
     S.bestTier = d.bestTier || 0;
     S.playTime = d.playTime || 0;
     S.boost = d.boost || 0;
+    if (d.zones) for (var z in S.zones) if (d.zones[z]) S.zones[z] = true;
+    if (d.zonePaid) S.zonePaid = d.zonePaid;
+    if (d.lines) for (var l in S.lines) if (typeof d.lines[l] === 'number') S.lines[l] = d.lines[l];
+    if (d.contracts) S.contracts = d.contracts;
+    S.contractSeed = d.contractSeed || 0;
+    S.market = d.market || 1;
     if (window.Ads) window.Ads.restore(d.ads);
     S.lastSeen = d.lastSeen || Date.now();
     for (var i = 0; i < S.pads.length && i < d.pads.length; i++) {
@@ -421,16 +512,16 @@ function resolveDrag(sx, sy) {
 /* ------------------------------------------------------------------ */
 /*  7. SIMULATION                                                      */
 /* ------------------------------------------------------------------ */
-var WORLD_W = 17, WORLD_H = 13;
+var WORLD_W = 23, WORLD_H = 17;
 var ORE_PER_PAD = 8, QUEUE_MAX = 40, TRAY_MAX = 26;
 
 function colliders() {
   var c = [
-    { x: REFINERY_POS.x, y: REFINERY_POS.y, r: 1.45 },
-    { x: TERMINAL_POS.x, y: TERMINAL_POS.y, r: 0.95 },
-    { x: ROCKET_POS.x, y: ROCKET_POS.y, r: 1.05 },
-    { x: DOME_POS.x, y: DOME_POS.y, r: 1.35 }
+    { x: REFINERY_POS.x, y: REFINERY_POS.y, r: 1.55 },
+    { x: MARKET_POS.x, y: MARKET_POS.y, r: 1.05 },
+    { x: ROCKET_POS.x, y: ROCKET_POS.y, r: 1.05 }
   ];
+  if (!S.zones.dome) c.push({ x: DOME_POS.x, y: DOME_POS.y, r: 2.5 });
   for (var i = 0; i < S.pads.length; i++) {
     var p = S.pads[i];
     if (p.drill) c.push({ x: p.x, y: p.y, r: 0.72 });
@@ -521,49 +612,77 @@ function updateCarrier(a, dt, cfg) {
   if (a.carryType === 'chip' && a.carry.length &&
       dist2(a.x, a.y, TERMINAL_POS.x, TERMINAL_POS.y) < 1.6 * 1.6 && a.actTimer <= 0) {
     var c = a.carry.pop();
-    var mult = S.boost > 0 ? (adCfg('boost').multiplier || 2) : 1;
-    var gain = c.value * mult;
-    S.credits += gain; S.totalEarned += gain;
+    sell(c, MARKET_POS.x, MARKET_POS.y);
     a.actTimer = cfg.rate * 0.8;
     if (!a.carry.length) a.carryType = null;
-    floater(TERMINAL_POS.x, TERMINAL_POS.y, 1.4, '+' + fmt(gain) + (mult > 1 ? ' ×2' : ''),
-            mult > 1 ? '#ffd76b' : '#8affe4');
-    burst(TERMINAL_POS.x, TERMINAL_POS.y, 1.1, mult > 1 ? '#ffca3a' : '#48e2c6', 5, 0.6);
     if (cfg.sound) Audio_.cash();
-    creditsPulse();
     return;
   }
 }
 
-/* Achat progressif d'un socle : il suffit de rester dessus */
+/* Achat progressif : il suffit de rester sur la dalle (socle ou porte de zone) */
+function payWhileStanding(dt, px, py, radius, cost, paid, label) {
+  if (dist2(S.player.x, S.player.y, px, py) > radius * radius) return -1;
+  if (S.credits <= 0) {
+    hint('Il te faut des crédits : ' + fmt(Math.ceil(cost - paid)) + ' ◈ restants', 1.2);
+    return -1;
+  }
+  var rate = Math.max(cost / 3.2, 30);
+  var amount = Math.min(rate * dt, S.credits, cost - paid);
+  S.credits -= amount;
+  if (Math.random() < dt * 14) burst(px, py, 0.15, '#48e2c6', 2, 0.5);
+  return paid + amount;
+}
+
 function updateUnlock(dt) {
-  var p, i, standing = null;
+  var i, p;
+
+  /* 1. portes de zone */
+  for (i = 0; i < ZONES.length; i++) {
+    var z = ZONES[i];
+    if (!z.door || S.zones[z.id]) continue;
+    var paid = payWhileStanding(dt, z.door.x, z.door.y, 1.05, z.cost, S.zonePaid[z.id] || 0);
+    if (paid < 0) continue;
+    S.zonePaid[z.id] = paid;
+    if (paid >= z.cost - 0.5) {
+      S.zones[z.id] = true;
+      S.zonePaid[z.id] = z.cost;
+      // le premier socle de la zone est offert, avec une foreuse à la hauteur de la base
+      var first = S.pads[z.pads[0]];
+      first.unlocked = true; first.paid = first.cost; first.pop = 1;
+      first.drill = { tier: clamp(S.bestTier - 2, 0, MAX_TIER), timer: 0, pulse: 1, spin: 0 };
+      Audio_.unlock();
+      burst(z.door.x, z.door.y, 0.5, '#ffca3a', 34, 1.7);
+      ring(z.door.x, z.door.y, 0.1, '#ffca3a');
+      floater(z.door.x, z.door.y, 1.8, z.name + ' ouverte !', '#ffd76b');
+      toast(z.name + ' débloquée 🔓', 'good');
+      if (window.Ads) { window.Ads.unlocks++; window.Ads.maybeInterstitial('zone_debloquee'); }
+      save();
+    }
+    return;
+  }
+
+  /* 2. socles (uniquement dans une zone ouverte) */
   for (i = 0; i < S.pads.length; i++) {
     p = S.pads[i];
-    if (p.unlocked) continue;
-    if (dist2(S.player.x, S.player.y, p.x, p.y) < 0.95 * 0.95) { standing = p; break; }
-  }
-  if (!standing) return;
-  if (S.credits <= 0) { hint('Il te faut des crédits : ' + fmt(standing.cost - standing.paid) + ' ◈ restants', 1.2); return; }
-
-  var rate = Math.max(standing.cost / 3.2, 30);
-  var amount = Math.min(rate * dt, S.credits, standing.cost - standing.paid);
-  S.credits -= amount;
-  standing.paid += amount;
-  if (Math.random() < dt * 14) burst(standing.x, standing.y, 0.15, '#48e2c6', 2, 0.5);
-
-  if (standing.paid >= standing.cost - 0.5) {
-    standing.unlocked = true;
-    standing.paid = standing.cost;
-    standing.drill = { tier: 0, timer: 0, pulse: 1, spin: 0 };
-    standing.pop = 1;
-    Audio_.unlock();
-    burst(standing.x, standing.y, 0.5, '#7ab8ff', 30, 1.5);
-    ring(standing.x, standing.y, 0.1, '#7ab8ff');
-    floater(standing.x, standing.y, 1.6, 'Socle actif !', '#7ab8ff');
-    toast('Nouveau socle en ligne 🛰️', 'good');
-    save();
-    if (window.Ads) { window.Ads.unlocks++; window.Ads.maybeInterstitial('socle_debloque'); }
+    if (p.unlocked || !S.zones[p.zone]) continue;
+    var pp = payWhileStanding(dt, p.x, p.y, 0.95, p.cost, p.paid);
+    if (pp < 0) continue;
+    p.paid = pp;
+    if (p.paid >= p.cost - 0.5) {
+      p.unlocked = true;
+      p.paid = p.cost;
+      p.drill = { tier: 0, timer: 0, pulse: 1, spin: 0 };
+      p.pop = 1;
+      Audio_.unlock();
+      burst(p.x, p.y, 0.5, '#7ab8ff', 30, 1.5);
+      ring(p.x, p.y, 0.1, '#7ab8ff');
+      floater(p.x, p.y, 1.6, 'Socle actif !', '#7ab8ff');
+      toast('Nouveau socle en ligne 🛰️', 'good');
+      save();
+      if (window.Ads) { window.Ads.unlocks++; window.Ads.maybeInterstitial('socle_debloque'); }
+    }
+    return;
   }
 }
 
@@ -613,6 +732,104 @@ function updateRefinery(dt) {
     burst(REFINERY_OUT.x, REFINERY_OUT.y, 0.75, '#48e2c6', 4, 0.5);
   }
   if (r.timer > period) r.timer = period;
+}
+
+/* Convoyeurs : ils prennent en charge une partie du transport */
+function updateLines(dt) {
+  var i, l;
+  for (i = 0; i < LINES.length; i++) {
+    l = LINES[i];
+    var lvl = S.lines[l.id];
+    if (!lvl) continue;
+    if (l.zone !== 'mine' && !S.zones[l.zone]) continue;
+    l.timer = (l.timer || 0) + dt;
+    var period = 1 / lineRate(l.id);
+    while (l.timer >= period) {
+      l.timer -= period;
+      if (l.carries === 'ore') {
+        if (S.refinery.queue.length >= QUEUE_MAX) break;
+        var best = -1, bd = 1e9;
+        for (var k = 0; k < S.ores.length; k++) {
+          var o = S.ores[k];
+          if (S.pads[o.pad].zone !== l.zone) continue;
+          var d = dist2(o.x, o.y, l.path[0].x, l.path[0].y);
+          if (d < bd) { bd = d; best = k; }
+        }
+        if (best < 0) break;
+        var ore = S.ores.splice(best, 1)[0];
+        S.transit.push({ line: l.id, t: 0, kind: 'ore', value: ore.value, tier: ore.tier });
+        burst(ore.x, ore.y, 0.3, TIERS[ore.tier].glow, 3, 0.4);
+      } else {
+        if (!S.refinery.tray.length) break;
+        var chip = S.refinery.tray.pop();
+        S.transit.push({ line: l.id, t: 0, kind: 'chip', value: chip.value, tier: chip.tier });
+      }
+    }
+  }
+
+  /* déplacement des colis */
+  for (i = S.transit.length - 1; i >= 0; i--) {
+    var it = S.transit[i];
+    l = lineById(it.line);
+    if (!l) { S.transit.splice(i, 1); continue; }
+    it.t += dt * 2.4 / Math.max(1, lineLength(l));
+    if (it.t < 1) continue;
+    S.transit.splice(i, 1);
+    if (it.kind === 'ore') {
+      S.refinery.queue.push({ value: it.value, tier: it.tier });
+      S.refinery.pulse = 1;
+    } else {
+      sell(it, MARKET_POS.x, MARKET_POS.y);
+    }
+  }
+}
+
+/* Vente d'une puce au marché : bonus de pub × cours du jour */
+function sell(chip, fx, fy) {
+  var mult = (S.boost > 0 ? (adCfg('boost').multiplier || 2) : 1) * S.market;
+  var gain = Math.round(chip.value * mult);
+  S.credits += gain; S.totalEarned += gain;
+  creditContracts(chip.tier);
+  floater(fx, fy, 1.4, '+' + fmt(gain) + (S.boost > 0 ? ' ×2' : ''),
+          S.boost > 0 ? '#ffd76b' : '#8affe4');
+  burst(fx, fy, 1.1, S.boost > 0 ? '#ffca3a' : '#48e2c6', 5, 0.6);
+  creditsPulse();
+  return gain;
+}
+
+/* Cours des cristaux : dérive lente, visible sur le marché */
+function updateMarket(dt) {
+  S.marketTarget = S.marketTarget || 1;
+  S.marketTimer = (S.marketTimer || 0) - dt;
+  if (S.marketTimer <= 0) {
+    S.marketTimer = rnd(50, 110);
+    S.marketTarget = rnd(0.82, 1.38);
+  }
+  S.market = lerp(S.market, S.marketTarget, 1 - Math.pow(0.25, dt));
+}
+
+/* Contrats : trois commandes à honorer, renouvelées à la réclamation */
+function makeContract() {
+  var top = S.bestTier;
+  var tier = clamp(top - ((Math.random() * 3) | 0), 0, top);
+  var qty = 12 + ((Math.random() * 26) | 0) + tier * 3;
+  var reward = Math.round(drillValue(tier) * qty * rnd(2.6, 3.6));
+  S.contractSeed++;
+  return { id: S.contractSeed, tier: tier, qty: qty, done: 0, reward: reward };
+}
+function ensureContracts() {
+  while (S.contracts.length < 3) S.contracts.push(makeContract());
+}
+function creditContracts(tier) {
+  for (var i = 0; i < S.contracts.length; i++) {
+    var c = S.contracts[i];
+    if (c.done < c.qty && tier >= c.tier) c.done++;
+  }
+}
+function claimableContracts() {
+  var n = 0;
+  for (var i = 0; i < S.contracts.length; i++) if (S.contracts[i].done >= S.contracts[i].qty) n++;
+  return n;
 }
 
 /* IA des drones : les pairs minent, les impairs convoient les crédits */
@@ -670,6 +887,14 @@ function updatePlayer(dt) {
 
 function updateHint() {
   var p = S.player, msg = '';
+  for (var zi = 1; zi < ZONES.length; zi++) {
+    var z = ZONES[zi];
+    if (!S.zones[z.id] && S.credits >= z.cost) {
+      msg = z.name + ' est à ta portée — va sur sa dalle 🔒';
+      break;
+    }
+  }
+  if (msg) { hint(msg, 0.6); return; }
   if (p.carryType === 'ore' && p.carry.length >= playerCap()) msg = 'Sac plein → raffinerie 🏭';
   else if (p.carryType === 'chip' && p.carry.length) msg = 'Encaisse au terminal ◈';
   else if (S.refinery.tray.length && !p.carry.length) msg = 'Puces prêtes à la raffinerie';
@@ -684,6 +909,8 @@ function update(dt) {
   updatePlayer(dt);
   updateDrones(dt);
   updateRefinery(dt);
+  updateLines(dt);
+  updateMarket(dt);
   updateUnlock(dt);
   updateFX(dt);
   updateHint();
@@ -845,11 +1072,26 @@ function buildDecor() {
     }
   }
   ['craters', 'rocks', 'plants', 'lights'].forEach(function (key) {
+    for (var w = DECOR[key].length - 1; w >= 0; w--) {
+      var d = DECOR[key][w];
+      if ((d.y > 8.0 && d.y < 9.4) || (d.x > 11.2 && d.x < 12.6 && d.y > 8.4) ||
+          (d.y > 13.0 && d.y < 14.4 && d.x > 9.7) || (d.x > 18.1 && d.x < 19.5 && d.y > 8.8 && d.y < 13.6)) {
+        DECOR[key].splice(w, 1);
+      }
+    }
     for (var p = 0; p < PAD_COUNT; p++) { var pp = padPos(p); clear(DECOR[key], pp.x, pp.y, 1.9); }
     clear(DECOR[key], REFINERY_POS.x, REFINERY_POS.y, 2.6);
     clear(DECOR[key], TERMINAL_POS.x, TERMINAL_POS.y, 2.2);
     clear(DECOR[key], ROCKET_POS.x, ROCKET_POS.y, 2.2);
-    clear(DECOR[key], DOME_POS.x, DOME_POS.y, 2.4);
+    clear(DECOR[key], DOME_POS.x, DOME_POS.y, 3.2);
+    clear(DECOR[key], MARKET_POS.x, MARKET_POS.y, 2.2);
+    clear(DECOR[key], BAY_DOOR.x, BAY_DOOR.y, 1.6);
+    clear(DECOR[key], DOME_DOOR.x, DOME_DOOR.y, 1.6);
+    for (var b = DECOR[key].length - 1; b >= 0; b--) {
+      var it = DECOR[key][b];
+      if (it.x > BAY_RECT.x0 - 0.6 && it.x < BAY_RECT.x1 + 0.6 &&
+          it.y > BAY_RECT.y0 - 0.6 && it.y < BAY_RECT.y1 + 0.6) DECOR[key].splice(b, 1);
+    }
   });
 }
 
@@ -962,16 +1204,20 @@ function drawPlatform(t) {
   isoRect(0, 0, WORLD_W, WORLD_H, '#4a5b8c');
 
   // zone minière (régolithe)
-  isoRect(0.9, 0.5, 15.6, 5.9, '#6f6796');
-  isoRect(1.1, 0.7, 15.4, 5.7, '#79709f');
+  isoRect(0.9, 0.5, 17.6, 7.8, '#6f6796');
+  isoRect(1.1, 0.7, 17.4, 7.6, '#79709f');
 
-  // allées
-  isoRect(0.4, 6.35, 16.6, 7.35, '#56679c');
-  isoRect(11.9, 6.35, 12.9, 12.6, '#56679c');
-  isoRect(0.4, 9.6, 15.8, 10.4, '#56679c');
-  isoLine(0.4, 6.85, 16.6, 6.85, 'rgba(255,255,255,.30)', 2, [10, 10]);
-  isoLine(12.4, 7.2, 12.4, 12.4, 'rgba(255,255,255,.30)', 2, [10, 10]);
-  isoLine(0.6, 10.0, 15.6, 10.0, 'rgba(255,255,255,.22)', 2, [10, 10]);
+  // allées principales
+  isoRect(0.4, 8.2, 22.5, 9.2, '#56679c');     // artère nord
+  isoRect(11.4, 8.6, 12.4, 15.2, '#56679c');   // artère centrale
+  isoRect(9.9, 13.2, 21.6, 14.2, '#56679c');   // artère sud
+  isoRect(18.3, 9.0, 19.3, 13.4, '#56679c');   // desserte de la raffinerie
+  isoLine(0.6, 8.7, 22.3, 8.7, 'rgba(255,255,255,.30)', 2, [10, 10]);
+  isoLine(11.9, 9.0, 11.9, 15.0, 'rgba(255,255,255,.28)', 2, [10, 10]);
+  isoLine(10.1, 13.7, 21.4, 13.7, 'rgba(255,255,255,.24)', 2, [10, 10]);
+
+  // convoyeurs
+  for (var li = 0; li < LINES.length; li++) drawBelt(LINES[li], t);
 
   // joints de panneaux
   ctx.globalAlpha = 0.10;
@@ -995,13 +1241,23 @@ function drawPlatform(t) {
 
   // marquages
   ctx.globalAlpha = 0.5;
-  discStroke(REFINERY_POS.x, REFINERY_POS.y, 0.002, 2.1, 'rgba(255,202,58,.35)', 2.5);
+  discStroke(REFINERY_POS.x, REFINERY_POS.y, 0.002, 2.2, 'rgba(255,202,58,.35)', 2.5);
   discStroke(ROCKET_POS.x, ROCKET_POS.y, 0.002, 1.7, 'rgba(255,255,255,.30)', 3);
   discStroke(ROCKET_POS.x, ROCKET_POS.y, 0.002, 1.35, 'rgba(255,255,255,.18)', 2);
   ctx.globalAlpha = 1;
 
+  // structures de zone (plates : dessinées avec le sol)
+  drawBay(t);
+  drawDomeFloor(t);
+
   // socles (partie plate, non triée)
-  for (var p = 0; p < S.pads.length; p++) drawSocket(S.pads[p], t);
+  for (var p = 0; p < S.pads.length; p++) {
+    if (!S.zones[S.pads[p].zone]) continue;      // socle invisible tant que la zone est fermée
+    drawSocket(S.pads[p], t);
+  }
+
+  // portes de zone
+  for (var zi = 0; zi < ZONES.length; zi++) if (ZONES[zi].door) drawDoor(ZONES[zi], t);
 
   // réacteurs sous la plateforme
   var eng = [[2.5, WORLD_H - 0.6], [WORLD_W - 2.5, WORLD_H - 0.6]];
@@ -1037,10 +1293,149 @@ function drawSocket(p, t) {
   }
 }
 
+/* ---------- convoyeurs ---------- */
+function drawBelt(l, t) {
+  var lvl = S.lines[l.id];
+  if (!lvl) return;
+  if (l.zone !== 'mine' && !S.zones[l.zone]) return;
+  var w = 0.42;
+  for (var i = 1; i < l.path.length; i++) {
+    var a = l.path[i - 1], b = l.path[i];
+    var x0 = Math.min(a.x, b.x) - w / 2, x1 = Math.max(a.x, b.x) + w / 2;
+    var y0 = Math.min(a.y, b.y) - w / 2, y1 = Math.max(a.y, b.y) + w / 2;
+    isoRect(x0, y0, x1, y1, '#2c3760');
+    isoRect(x0 + 0.06, y0 + 0.06, x1 - 0.06, y1 - 0.06, '#3f4d80');
+  }
+  // chevrons animés dans le sens de la marche
+  var n = 9 + lvl * 3;
+  for (var k = 0; k < n; k++) {
+    var ph = ((t * 0.28 * (1 + lvl * 0.25) + k / n) % 1);
+    var p = pointOnLine(l, ph);
+    var sc = toScreen(p.x, p.y, 0.02);
+    ctx.globalAlpha = 0.4;
+    ctx.fillStyle = '#9fc4ff';
+    ctx.beginPath();
+    ctx.ellipse(sc.x, sc.y, 7 * cam.zoom, 3.5 * cam.zoom, 0, 0, 6.2832);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawTransit(it, t) {
+  var l = lineById(it.line);
+  if (!l) return;
+  var p = pointOnLine(l, it.t);
+  var s = toScreen(p.x, p.y, 0.28);
+  shadow(p.x, p.y, 0.18, 0.22);
+  if (it.kind === 'ore') drawCrystalShape(s.x, s.y, 8 * cam.zoom, TIERS[it.tier]);
+  else drawChip(s.x, s.y, 9 * cam.zoom);
+}
+
+/* ---------- porte de zone ---------- */
+function drawDoor(z, t) {
+  var d = z.door, open = S.zones[z.id];
+  var col = open ? '#4d9a7e' : '#57608f';
+  box(d.x, d.y, 0, 1.7, 1.7, 0.16, col, { top: sh(col, 1.2), edge: '#ffca3a', edgeA: open ? 0.25 : 0.6 });
+  var glow = open ? '#48e2c6' : '#ffca3a';
+  discStroke(d.x, d.y, 0.165, 0.7, rgba(glow, open ? 0.4 : 0.35 + 0.25 * Math.sin(t * 3)), 3);
+  if (open) {
+    return;
+  }
+  if (z.paidFrac === undefined) z.paidFrac = 0;
+  var frac = clamp((S.zonePaid[z.id] || 0) / z.cost, 0, 1);
+  if (frac > 0) {
+    var sp = toScreen(d.x, d.y, 0.17);
+    ctx.beginPath();
+    ctx.ellipse(sp.x, sp.y, 0.7 * (TILE_W / 2) * cam.zoom, 0.7 * (TILE_H / 2) * cam.zoom,
+                0, -Math.PI / 2, -Math.PI / 2 + frac * 6.2832);
+    ctx.strokeStyle = '#ffca3a'; ctx.lineWidth = 6 * cam.zoom; ctx.stroke();
+  }
+  // cadenas
+  var s2 = toScreen(d.x, d.y, 0.45 + Math.sin(t * 2) * 0.05);
+  ctx.save();
+  ctx.fillStyle = '#ffd97a';
+  roundRect(s2.x - 13 * cam.zoom, s2.y - 10 * cam.zoom, 26 * cam.zoom, 20 * cam.zoom, 5 * cam.zoom); ctx.fill();
+  ctx.strokeStyle = '#ffd97a'; ctx.lineWidth = 4 * cam.zoom;
+  ctx.beginPath(); ctx.arc(s2.x, s2.y - 10 * cam.zoom, 7.5 * cam.zoom, Math.PI, 0); ctx.stroke();
+  ctx.fillStyle = '#3a2400';
+  ctx.beginPath(); ctx.arc(s2.x, s2.y, 3.5 * cam.zoom, 0, 6.2832); ctx.fill();
+  ctx.restore();
+  label(d.x, d.y, 1.5, z.name, { size: 11, color: '#ffd97a', border: 'rgba(255,202,58,.6)' });
+  label(d.x, d.y, 1.05, fmt(Math.max(0, Math.ceil(z.cost - (S.zonePaid[z.id] || 0)))) + ' ◈',
+        { size: 13, color: S.credits > 0 ? '#8affe4' : '#ffd9dd', border: 'rgba(72,226,198,.55)' });
+}
+
+/* ---------- soute de la fusée ---------- */
+function drawBay(t) {
+  var R = BAY_RECT;
+  var cx = (R.x0 + R.x1) / 2, cy = (R.y0 + R.y1) / 2;
+  var w = R.x1 - R.x0, d = R.y1 - R.y0;
+  shadow(cx, cy, 2.6, 0.3);
+
+  if (!S.zones.bay) {                                   // module encore scellé
+    box(cx, cy, 0, w, d, 0.25, '#232c4e', { top: '#2b3559' });
+    box(cx, cy, 0.25, w - 0.3, d - 0.3, 1.5, '#39456f',
+        { top: '#4a5788', left: '#2a3460', right: '#414e80', edge: '#7ab8ff', edgeA: 0.3 });
+    box(cx, cy, 1.75, w - 0.05, d - 0.05, 0.18, '#2f3a63', { top: '#3f4b7c' });
+    // nervures verticales
+    for (var v = 1; v < 5; v++) {
+      var vx = R.x0 + v * (w / 5);
+      var v0 = toScreen(vx, R.y1 - 0.15, 1.75), v1 = toScreen(vx, R.y1 - 0.15, 0.25);
+      ctx.strokeStyle = 'rgba(160,200,255,.16)'; ctx.lineWidth = 4 * cam.zoom;
+      ctx.beginPath(); ctx.moveTo(v0.x, v0.y); ctx.lineTo(v1.x, v1.y); ctx.stroke();
+    }
+    var hs = toScreen(cx, cy, 1.62);
+    ctx.fillStyle = 'rgba(255,202,58,.5)';
+    ctx.font = '800 ' + (17 * cam.zoom) + 'px "Baloo 2", sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('⚠ SOUTE SCELLÉE', hs.x, hs.y);
+    for (var i = 0; i < 3; i++) {                        // rivets lumineux
+      var rs = toScreen(R.x0 + 0.9 + i * 1.7, R.y1 + 0.02, 0.9);
+      ctx.fillStyle = rgba('#ffca3a', 0.35 + 0.3 * Math.sin(t * 3 + i));
+      ctx.beginPath(); ctx.arc(rs.x, rs.y, 5 * cam.zoom, 0, 6.2832); ctx.fill();
+    }
+    return;
+  }
+
+  // plancher
+  box(cx, cy, 0, w, d, 0.18, '#5d6a9c', { top: '#6f7dae', edge: '#bcd6ff', edgeA: 0.25 });
+  // grille de plancher
+  ctx.globalAlpha = 0.12;
+  for (var gx = R.x0 + 1; gx < R.x1; gx += 1) isoLine(gx, R.y0, gx, R.y1, '#ffffff', 1);
+  for (var gy = R.y0 + 1; gy < R.y1; gy += 1) isoLine(R.x0, gy, R.x1, gy, '#ffffff', 1);
+  ctx.globalAlpha = 1;
+  // murs du fond (coupe : les parois proches sont retirées)
+  box(R.x0 - 0.14, cy, 0.18, 0.28, d, 1.5, '#46538a', { top: '#5b69a6', left: '#33406f', right: '#4d5b95' });
+  box(cx, R.y0 - 0.14, 0.18, w, 0.28, 1.5, '#46538a', { top: '#5b69a6', left: '#33406f', right: '#4d5b95' });
+  // nervures de coque
+  for (var r = 1; r < 4; r++) {
+    var a0 = toScreen(R.x0, R.y0 + r * (d / 4), 1.68), a1 = toScreen(R.x0, R.y0 + r * (d / 4), 0.18);
+    ctx.strokeStyle = 'rgba(160,200,255,.18)'; ctx.lineWidth = 3 * cam.zoom;
+    ctx.beginPath(); ctx.moveTo(a0.x, a0.y); ctx.lineTo(a1.x, a1.y); ctx.stroke();
+  }
+  // bandeau lumineux au plafond
+  var l0 = toScreen(R.x0 + 0.2, R.y0 + 0.2, 1.45), l1 = toScreen(R.x1 - 0.2, R.y0 + 0.2, 1.45);
+  ctx.strokeStyle = rgba('#8affe4', 0.5); ctx.lineWidth = 4 * cam.zoom;
+  ctx.beginPath(); ctx.moveTo(l0.x, l0.y); ctx.lineTo(l1.x, l1.y); ctx.stroke();
+  // rampe d'accès vers l'artère
+  var rp = [toScreen(R.x1, R.y0 + 1.7, 0.18), toScreen(R.x1, R.y1 - 1.0, 0.18),
+            toScreen(R.x1 + 1.0, R.y1 - 1.0, 0), toScreen(R.x1 + 1.0, R.y0 + 1.7, 0)];
+  poly(rp, '#4b5891');
+  label(cx, R.y0 - 0.2, 2.1, 'SOUTE ASTRA-1', { size: 11, color: '#cfe0ff', alpha: 0.9, near: 11 });
+}
+
 /* Étiquette flottante (prix, rang…) — mise en file, dessinée au-dessus de tout */
 var LBL = [];
 function label(x, y, z, text, opts) {
-  LBL.push({ d: x + y, x: x, y: y, z: z, text: text, opts: opts || {} });
+  opts = opts || {};
+  if (opts.near) {                                  // n'apparaît qu'à proximité
+    var d2 = dist2(S.player.x, S.player.y, x, y);
+    if (d2 > opts.near * opts.near) return;
+    opts = Object.assign({}, opts);
+    opts.alpha = (opts.alpha === undefined ? 1 : opts.alpha) *
+                 clamp((opts.near - Math.sqrt(d2)) / 1.5, 0, 1);
+  }
+  LBL.push({ d: x + y, x: x, y: y, z: z, text: text, opts: opts });
 }
 function flushLabels() {
   LBL.sort(function (a, b) { return a.d - b.d; });
@@ -1206,7 +1601,7 @@ function drawHopper(t) {
   }
   ctx.globalAlpha = 1;
   label(P.x, P.y, 1.35, '⬇ CRISTAUX' + (r.queue.length ? ' · ' + r.queue.length : ''),
-        { size: 10, color: '#bfe9ff', border: 'rgba(72,226,198,.55)', alpha: 0.92 });
+        { size: 10, color: '#bfe9ff', border: 'rgba(72,226,198,.55)', alpha: 0.92, near: 9 });
 }
 
 function drawRefineryBody(t) {
@@ -1290,8 +1685,8 @@ function drawTray(t) {
     var cs = toScreen(P.x - 0.28 + col * 0.28, P.y - 0.24 + row * 0.24, 0.52 + layer * 0.09);
     drawChip(cs.x, cs.y, 9.5 * cam.zoom);
   }
-  if (r.tray.length) label(P.x, P.y, 1.15, r.tray.length + ' ◈', { size: 12, color: '#8affe4', border: 'rgba(72,226,198,.6)' });
-  else label(P.x, P.y, 1.0, '◈ SORTIE', { size: 10, color: '#9fb4d8', alpha: 0.7 });
+  if (r.tray.length) label(P.x, P.y, 1.15, r.tray.length + ' ◈', { size: 12, color: '#8affe4', border: 'rgba(72,226,198,.6)', near: 9 });
+  else label(P.x, P.y, 1.0, '◈ SORTIE', { size: 10, color: '#9fb4d8', alpha: 0.7, near: 7 });
 }
 
 /* ---------- terminal de crédits ---------- */
@@ -1338,7 +1733,11 @@ function drawTerminal(t) {
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('◈', 0, 0);
   ctx.restore();
-  label(P.x, P.y, 2.2, 'TERMINAL', { size: 11, color: '#8affe4', border: 'rgba(72,226,198,.6)', alpha: 0.92 });
+  var up = S.market >= 1;
+  label(P.x, P.y, 2.2, 'MARCHÉ', { size: 11, color: '#8affe4', border: 'rgba(72,226,198,.6)', alpha: 0.92 });
+  label(P.x, P.y, 1.78, (up ? '▲ ' : '▼ ') + 'cours ×' + S.market.toFixed(2),
+        { size: 11, color: up ? '#8affe4' : '#ffc9cf', near: 7,
+          border: up ? 'rgba(72,226,198,.5)' : 'rgba(255,122,138,.5)', alpha: 0.9 });
 }
 
 /* ---------- fusée, dôme, panneaux, antennes ---------- */
@@ -1377,31 +1776,57 @@ function drawRocket(t) {
     ctx.beginPath(); ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.closePath();
     ctx.fillStyle = '#ff6b81'; ctx.fill();
   });
-  label(P.x, P.y, 3.35, 'ASTRA-1', { size: 10, color: '#cfe0ff', alpha: 0.8 });
+  label(P.x, P.y, 3.35, 'ASTRA-1', { size: 10, color: '#cfe0ff', alpha: 0.8, near: 9 });
 }
 
-function drawDome(t) {
-  var P = DOME_POS;
-  shadow(P.x, P.y, 1.45, 0.3);
-  cyl(P.x, P.y, 0, 1.35, 0.35, '#5d6b96');
-  var s = toScreen(P.x, P.y, 0.35);
-  var R = 1.35 * (TILE_W / 2) * cam.zoom;
+function drawDomeFloor(t) {
+  var P = DOME_POS, R = 2.45;
+  disc(P.x, P.y, 0.004, R + 0.15, 'rgba(20,30,60,.35)');
+  disc(P.x, P.y, 0.005, R, S.zones.dome ? '#4e8f6e' : '#4a5687');
+  disc(P.x, P.y, 0.006, R - 0.35, S.zones.dome ? '#5aa87f' : '#525f93');
+  discStroke(P.x, P.y, 0.007, R - 0.9, 'rgba(255,255,255,.10)', 2);
+  if (S.zones.dome) {
+    // parterres hydroponiques
+    for (var i = 0; i < 5; i++) {
+      var a = i * 1.256 + 0.4;
+      disc(P.x + Math.cos(a) * (R - 0.6), P.y + Math.sin(a) * (R - 0.6), 0.008, 0.32, 'rgba(125,255,180,.35)');
+    }
+  }
+}
+
+function drawDomeGlass(t) {
+  var P = DOME_POS, R = 2.45;
+  cyl(P.x, P.y, 0, R, 0.22, S.zones.dome ? '#5d7a96' : '#5d6b96');
+  var s = toScreen(P.x, P.y, 0.22);
+  var rx = R * (TILE_W / 2) * cam.zoom;
   ctx.save();
-  ctx.beginPath(); ctx.ellipse(s.x, s.y, R, R * 0.92, 0, Math.PI, 0);
-  ctx.closePath();
-  var g = ctx.createRadialGradient(s.x - R * 0.35, s.y - R * 0.5, R * 0.1, s.x, s.y, R * 1.2);
-  g.addColorStop(0, 'rgba(190,235,255,.85)'); g.addColorStop(0.55, 'rgba(110,180,235,.55)'); g.addColorStop(1, 'rgba(40,90,160,.65)');
+  ctx.beginPath(); ctx.ellipse(s.x, s.y, rx, rx * 0.95, 0, Math.PI, 0); ctx.closePath();
+  var g = ctx.createRadialGradient(s.x - rx * 0.35, s.y - rx * 0.5, rx * 0.1, s.x, s.y, rx * 1.2);
+  if (S.zones.dome) {
+    g.addColorStop(0, 'rgba(190,235,255,.42)');
+    g.addColorStop(0.55, 'rgba(110,180,235,.20)');
+    g.addColorStop(1, 'rgba(40,90,160,.30)');
+  } else {
+    g.addColorStop(0, 'rgba(190,220,255,.85)');
+    g.addColorStop(0.55, 'rgba(110,150,215,.75)');
+    g.addColorStop(1, 'rgba(40,70,140,.85)');
+  }
   ctx.fillStyle = g; ctx.fill();
-  ctx.strokeStyle = 'rgba(190,225,255,.5)'; ctx.lineWidth = 2 * cam.zoom; ctx.stroke();
-  // reflets
-  ctx.beginPath(); ctx.ellipse(s.x - R * 0.35, s.y - R * 0.35, R * 0.18, R * 0.34, -0.5, 0, 6.2832);
-  ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.fill();
-  // plantes sous le dôme
-  ctx.beginPath(); ctx.ellipse(s.x, s.y - R * 0.1, R * 0.55, R * 0.2, 0, 0, 6.2832);
-  ctx.fillStyle = 'rgba(90,230,160,.5)'; ctx.fill();
+  ctx.strokeStyle = 'rgba(190,225,255,.45)'; ctx.lineWidth = 2.5 * cam.zoom; ctx.stroke();
+  // armatures
+  ctx.strokeStyle = 'rgba(190,225,255,.22)'; ctx.lineWidth = 2 * cam.zoom;
+  for (var i = 1; i < 5; i++) {
+    var k = i / 5 * Math.PI;
+    ctx.beginPath();
+    ctx.moveTo(s.x - Math.cos(k) * rx, s.y);
+    ctx.quadraticCurveTo(s.x - Math.cos(k) * rx * 0.5, s.y - rx * 0.95, s.x, s.y - rx * 0.95);
+    ctx.stroke();
+  }
+  ctx.beginPath(); ctx.ellipse(s.x - rx * 0.35, s.y - rx * 0.35, rx * 0.16, rx * 0.3, -0.5, 0, 6.2832);
+  ctx.fillStyle = 'rgba(255,255,255,.30)'; ctx.fill();
   ctx.restore();
-  // sas
-  box(P.x - 0.2, P.y + 1.25, 0, 0.8, 0.7, 0.6, '#48568a', { top: '#5a6a9e' });
+  if (!S.zones.dome) label(P.x, P.y, 3.1, 'SERRE — DÉPRESSURISÉE', { size: 10, color: '#cfe0ff', alpha: 0.8 });
+  else label(P.x, P.y, 3.1, 'SERRE HYDROPONIQUE', { size: 10, color: '#8affe4', alpha: 0.75, near: 11 });
 }
 
 function drawSolar(x, y, t) {
@@ -1692,9 +2117,9 @@ function drawFX(t) {
 }
 
 /* ---------- assemblage de la scène ---------- */
-var SOLARS = [{ x: 16.2, y: 5.2 }, { x: 16.2, y: 11.4 }, { x: 0.8, y: 8.2 }];
-var ANTENNAS = [{ x: 0.9, y: 12.1 }, { x: 16.3, y: 0.9 }];
-var CRATES = [{ x: 3.9, y: 11.7, t: 3 }, { x: 4.5, y: 12.1, t: 5 }, { x: 3.4, y: 12.2, t: 1 }];
+var SOLARS = [{ x: 22.0, y: 7.4 }, { x: 15.0, y: 16.2 }, { x: 0.9, y: 6.0 }];
+var ANTENNAS = [{ x: 1.0, y: 15.6 }, { x: 16.6, y: 0.9 }];
+var CRATES = [{ x: 2.2, y: 13.2, t: 3 }, { x: 2.9, y: 13.7, t: 5 }, { x: 1.8, y: 14.0, t: 1 }];
 
 function render(t) {
   ctx.clearRect(0, 0, W, H);
@@ -1726,11 +2151,11 @@ function render(t) {
   push(REFINERY_POS.x + REFINERY_POS.y, function () { drawRefineryBody(t); });
   push(TERMINAL_POS.x + TERMINAL_POS.y, function () { drawTerminal(t); });
   push(ROCKET_POS.x + ROCKET_POS.y, function () { drawRocket(t); });
-  push(DOME_POS.x + DOME_POS.y, function () { drawDome(t); });
+  push(DOME_POS.x + DOME_POS.y + 3.2, function () { drawDomeGlass(t); });
 
   // socles verrouillés : cadenas + prix
   S.pads.forEach(function (p) {
-    if (p.unlocked) return;
+    if (p.unlocked || !S.zones[p.zone]) return;
     push(p.x + p.y + 0.01, function () {
       var s = toScreen(p.x, p.y, 0.35 + Math.sin(t * 2 + p.i) * 0.05);
       ctx.save();
@@ -1752,13 +2177,21 @@ function render(t) {
 
   // foreuses
   S.pads.forEach(function (p) {
-    if (!p.drill) return;
+    if (!p.drill || !S.zones[p.zone]) return;
     if (drag.active && drag.pad === p) return;   // celle qu'on déplace est dessinée au-dessus
     push(p.x + p.y + 0.02, function () { drawDrill(p, t); });
   });
 
   // cristaux au sol
   S.ores.forEach(function (o) { push(o.x + o.y + 0.03, function () { drawOre(o, t); }); });
+
+  // colis sur les convoyeurs
+  S.transit.forEach(function (it) {
+    var l = lineById(it.line);
+    if (!l) return;
+    var p = pointOnLine(l, it.t);
+    push(p.x + p.y + 0.04, function () { drawTransit(it, t); });
+  });
 
   // drones et astronaute
   S.drones.forEach(function (d) { push(d.x + d.y + 0.05, function () { drawDrone(d, t); }); });
@@ -1814,7 +2247,7 @@ var el = function (id) { return document.getElementById(id); };
 var creditsVal = el('creditsVal'), creditsBox = el('creditsBox');
 var carryFill = el('carryFill'), carryLabel = el('carryLabel');
 var overlay = el('overlay'), toastsEl = el('toasts'), hintEl = el('hint');
-var hintTimer = 0, lastCredits = -1, lastCarry = -1, lastCap = -1;
+var hintTimer = 0, lastCredits = -1, lastCarry = -1, lastCap = -1, lastClaimable = -1;
 
 function toast(msg, kind) {
   var d = document.createElement('div');
@@ -1962,7 +2395,59 @@ function renderUpgrades() {
         : '<button class="buy" data-up="' + u.id + '"' + (S.credits >= cost ? '' : ' disabled') + '>' + fmt(cost) + ' ◈</button>') +
       '</div>';
   });
+  html += '<div class="section-title">Lignes d\'approvisionnement</div>';
+  LINES.forEach(function (l) {
+    var lvl = S.lines[l.id];
+    var locked = l.zone !== 'mine' && !S.zones[l.zone];
+    var maxed = lvl >= LINE_MAX;
+    var cost = lineCost(l);
+    var pips = '<div class="pips">';
+    for (var i = 0; i < LINE_MAX; i++) pips += '<span class="pip' + (i < lvl ? ' on' : '') + '"></span>';
+    pips += '</div>';
+    html += '<div class="row"' + (locked ? ' style="opacity:.5"' : '') + '>' +
+      '<div class="emoji">' + l.icon + '</div>' +
+      '<div class="txt"><b>' + l.name + '</b>' +
+      '<small>' + (l.carries === 'ore' ? 'Achemine les cristaux tout seul' : 'Vend les puces automatiquement') + '</small>' +
+      '<div class="val">' + (lvl ? lineRate(l.id).toFixed(2) + '/s' : 'inactive') +
+      (maxed || locked ? '' : '<span class="arrow">→</span><span class="to">' + ((lvl + 1) * 0.45).toFixed(2) + '/s</span>') +
+      '</div>' + pips + '</div>' +
+      (locked
+        ? '<button class="buy" disabled>Zone fermée</button>'
+        : maxed
+          ? '<button class="buy max" disabled>MAX</button>'
+          : '<button class="buy" data-line="' + l.id + '"' + (S.credits >= cost ? '' : ' disabled') + '>' + fmt(cost) + ' ◈</button>') +
+      '</div>';
+  });
+
+  html += '<div class="section-title">Zones de la base</div>';
+  ZONES.forEach(function (z) {
+    if (!z.door) return;
+    var open = S.zones[z.id];
+    var pads = z.pads.filter(function (i) { return S.pads[i].unlocked; }).length;
+    html += '<div class="row">' +
+      '<div class="emoji">' + (open ? '🔓' : '🔒') + '</div>' +
+      '<div class="txt"><b>' + z.name + '</b><small>' + z.desc + '</small>' +
+      '<div class="val">' + (open ? '<span class="to">ouverte · ' + pads + '/' + z.pads.length + ' socles actifs</span>'
+                                  : 'Pose-toi sur la dalle pour l\'acheter') + '</div></div>' +
+      (open ? '<button class="buy max" disabled>OK</button>'
+            : '<button class="buy" disabled>' + fmt(z.cost) + ' ◈</button>') +
+      '</div>';
+  });
+
   body.innerHTML = html;
+  Array.prototype.forEach.call(body.querySelectorAll('[data-line]'), function (b) {
+    b.onclick = function () {
+      var l = lineById(b.getAttribute('data-line'));
+      if (!l) return;
+      var cost = lineCost(l);
+      if (S.lines[l.id] >= LINE_MAX) return;
+      if (S.credits < cost) { Audio_.error(); toast('Pas assez de crédits', 'bad'); return; }
+      S.credits -= cost; S.lines[l.id]++;
+      Audio_.buy(); creditsPulse();
+      toast(l.name + ' — niveau ' + S.lines[l.id], 'good');
+      save(); renderUpgrades();
+    };
+  });
   Array.prototype.forEach.call(body.querySelectorAll('[data-up]'), function (b) {
     b.onclick = function () {
       var id = b.getAttribute('data-up');
@@ -1979,6 +2464,45 @@ function renderUpgrades() {
   });
 }
 
+/* ---------- contrats ---------- */
+function renderContracts() {
+  ensureContracts();
+  var up = S.market >= 1;
+  var html = '<div class="market-line"><span>Cours des cristaux</span>' +
+    '<b style="color:' + (up ? '#8affe4' : '#ffc9cf') + '">' + (up ? '▲' : '▼') + ' ×' + S.market.toFixed(2) + '</b></div>';
+  S.contracts.forEach(function (c, idx) {
+    var ready = c.done >= c.qty;
+    var frac = clamp(c.done / c.qty, 0, 1);
+    html += '<div class="row">' +
+      '<div class="emoji" style="background:' + rgba(TIERS[c.tier].glow, 0.18) + ';color:' + TIERS[c.tier].crystal + '">◆</div>' +
+      '<div class="txt"><b>' + c.qty + ' cristaux ' + TIERS[c.tier].name + ' ou mieux</b>' +
+      '<small>Récompense : <b style="color:#ffd76b">' + fmt(c.reward) + ' ◈</b></small>' +
+      '<div class="bar' + (ready ? ' full' : '') + '"><span style="width:' + (frac * 100) + '%"></span></div>' +
+      '<div class="val">' + Math.min(c.done, c.qty) + ' / ' + c.qty + '</div></div>' +
+      (ready
+        ? '<button class="buy max" data-claim="' + idx + '">Réclamer</button>'
+        : '<button class="buy" disabled>En cours</button>') +
+      '</div>';
+  });
+  html += '<p class="panel-sub" style="margin-top:12px">Une commande honorée est aussitôt remplacée par une autre, calée sur ton meilleur rang de foreuse.</p>';
+  var body = el('contractsBody');
+  body.innerHTML = html;
+  Array.prototype.forEach.call(body.querySelectorAll('[data-claim]'), function (b) {
+    b.onclick = function () {
+      var i = +b.getAttribute('data-claim');
+      var c = S.contracts[i];
+      if (!c || c.done < c.qty) return;
+      S.credits += c.reward; S.totalEarned += c.reward;
+      S.contracts[i] = makeContract();
+      Audio_.merge(); creditsPulse();
+      toast('Contrat honoré : +' + fmt(c.reward) + ' ◈', 'good');
+      floater(MARKET_POS.x, MARKET_POS.y, 2.0, '+' + fmt(c.reward) + ' ◈', '#ffd76b');
+      burst(MARKET_POS.x, MARKET_POS.y, 1.2, '#ffca3a', 26, 1.3);
+      save(); renderContracts();
+    };
+  });
+}
+
 /* ---------- menu ---------- */
 function renderMenu() {
   var h = Math.floor(S.playTime / 3600), m = Math.floor((S.playTime % 3600) / 60);
@@ -1988,6 +2512,8 @@ function renderMenu() {
     '<div class="stat"><b>' + fmt(S.totalMined) + '</b><small>cristaux extraits</small></div>' +
     '<div class="stat"><b>' + TIERS[S.bestTier].name + '</b><small>meilleur rang</small></div>' +
     '<div class="stat"><b>' + h + 'h ' + m + 'm</b><small>temps de mission</small></div>' +
+    '<div class="stat"><b>' + S.pads.filter(function (p) { return p.drill; }).length + ' / ' + PAD_COUNT + '</b><small>socles équipés</small></div>' +
+    '<div class="stat"><b>' + (1 + (S.zones.bay ? 1 : 0) + (S.zones.dome ? 1 : 0)) + ' / 3</b><small>zones ouvertes</small></div>' +
     '</div>' +
     '<button class="menu-btn" id="mHow">📖 Comment jouer</button>' +
     '<button class="menu-btn" id="mSound">' + (Audio_.on ? '🔊 Son : activé' : '🔇 Son : coupé') + '</button>' +
@@ -2025,6 +2551,7 @@ function toggleSound() {
 
 el('btnShop').onclick = function () { renderShop(); openPanel('panelShop'); };
 el('btnUpgrades').onclick = function () { renderUpgrades(); openPanel('panelUpgrades'); };
+el('btnContracts').onclick = function () { renderContracts(); openPanel('panelContracts'); };
 el('btnMenu').onclick = function () { renderMenu(); openPanel('panelMenu'); };
 el('btnSound').onclick = function () { Audio_.init(); toggleSound(); };
 el('btnPlay').onclick = function () { closeAll(); S.started = true; Audio_.init(); };
@@ -2100,6 +2627,16 @@ function updateHUD(dt) {
   var shopBtn = el('btnShop');
   var can = freePads() > 0 && S.credits >= shopCost(S.bought);
   if (can !== shopBtn.classList.contains('glow')) shopBtn.classList.toggle('glow', can);
+
+  // pastille des contrats à réclamer
+  var n = claimableContracts();
+  if (n !== lastClaimable) {
+    lastClaimable = n;
+    var badge = el('contractBadge');
+    badge.textContent = n;
+    badge.classList.toggle('on', n > 0);
+    el('btnContracts').classList.toggle('glow', n > 0);
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -2136,6 +2673,7 @@ function boot() {
   if (window.Ads) window.Ads.init();
   initWorld();
   var had = load();
+  ensureContracts();
   try {
     var sp = localStorage.getItem(SAVE_KEY + '-sound');
     if (sp === '0') { Audio_.on = false; el('btnSound').textContent = '🔇'; }
@@ -2170,7 +2708,8 @@ window.AstroBase = {
   fmt: fmt, save: save,
   start: function () { S.started = true; closeAll(); },
   tp: function (x, y) { S.player.x = x; S.player.y = y; cam.x = x; cam.y = y; },
-  pos: { refineryIn: REFINERY_IN, refineryOut: REFINERY_OUT, terminal: TERMINAL_POS, pad: padPos },
+  pos: { refineryIn: REFINERY_IN, refineryOut: REFINERY_OUT, terminal: TERMINAL_POS, market: MARKET_POS, pad: padPos },
+  zones: ZONES, lines: LINES,
   goto: function (name) { var p = this.pos[name]; if (p) this.tp(p.x, p.y); },
   give: function (n) { S.credits += n; },
   pads: function () { return S.pads; },
