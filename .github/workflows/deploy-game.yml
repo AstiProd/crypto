@@ -1,0 +1,56 @@
+# Publie Astro Base Tycoon sur GitHub Pages — hébergement gratuit.
+# URL une fois actif : https://astiprod.github.io/crypto/
+name: Publier le jeu
+
+on:
+  push:
+    branches: [master]        # l'environnement github-pages n'accepte que la branche principale
+    paths: ['game/**', '.github/workflows/deploy-game.yml']
+  workflow_dispatch:        # bouton « Run workflow » dans l'onglet Actions
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Assembler le dossier web
+        run: node game/tools/build-www.js
+
+      - name: Vérifier que rien ne manque
+        run: |
+          for f in index.html style.css game.js ads.js ads.config.js manifest.webmanifest sw.js; do
+            test -s "game/www/$f" || { echo "::error::game/www/$f manquant"; exit 1; }
+          done
+          test -s game/www/icons/icon-512.png || { echo "::error::icône manquante"; exit 1; }
+
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true      # active GitHub Pages si ce n'est pas déjà fait
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: game/www
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

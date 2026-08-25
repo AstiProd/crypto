@@ -47,6 +47,13 @@ window.ADS_CONFIG = {
     minUnlocks: 2          // ni avant le 2ᵉ socle débloqué
   },
 
+  /* --- Version web (GitHub Pages, itch.io, portail de jeux) ---
+     AdMob est réservé aux applications iOS/Android : sur le web il faut la régie
+     d'un portail HTML5. Mets `webSdk` à 'portal' et charge le SDK du portail dans
+     index.html ; sinon le lecteur de démonstration s'affiche (rien n'est facturé,
+     rien n'est diffusé). Voir store/PUBLIER.md. */
+  webSdk: 'demo',          // 'demo' | 'portal'
+
   // Respect de la vie privée
   consent: {
     useUmp: true,          // formulaire Google UMP (RGPD / CCPA)

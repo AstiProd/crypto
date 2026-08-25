@@ -67,6 +67,15 @@ passer `testMode` à `false` avant publication. Le menu ⋯ propose « Supprimer
 (à brancher sur un achat intégré) et « Confidentialité des publicités » (rouvre le
 formulaire de consentement).
 
+## Version web installable (PWA)
+
+Le jeu s'installe depuis un simple navigateur : `manifest.webmanifest`, service worker
+(`sw.js`) et icônes PNG. Sur téléphone, « Ajouter à l'écran d'accueil » donne une app
+plein écran **qui fonctionne hors ligne** — aucun store, aucun compte, zéro euro.
+
+`.github/workflows/deploy-game.yml` publie `game/www/` sur GitHub Pages à chaque push.
+Toutes les voies de publication gratuites sont détaillées dans `store/PUBLIER.md`.
+
 ## Application mobile (iOS + Android)
 
 Le dépôt contient les projets natifs générés par Capacitor, déjà configurés pour les

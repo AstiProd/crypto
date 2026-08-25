@@ -106,7 +106,21 @@ function icon(ctx, S, withBg) {
     x.fillText('ASTRO BASE TYCOON', 1366, 1366 + 620);
   `);
 
+  // icônes PNG pour le web installable (PWA) : Safari n'accepte pas le webp
+  const web = path.join(__dirname, '..', 'icons');
+  fs.mkdirSync(web, { recursive: true });
+  for (const size of [180, 192, 512]) {
+    const page = await browser.newPage({ viewport: { width: size, height: size }, deviceScaleFactor: 1 });
+    await page.setContent('<style>html,body{margin:0;background:#05070f}canvas{display:block}</style>' +
+      `<canvas id="c" width="${size}" height="${size}"></canvas><script>${draw}` +
+      `\nconst x=document.getElementById("c").getContext("2d");icon(x,${size},true);<\/script>`);
+    await page.waitForTimeout(120);
+    await page.screenshot({ path: path.join(web, 'icon-' + size + '.png') });
+    await page.close();
+    console.log('→ icons/icon-' + size + '.png');
+  }
+
   await browser.close();
-  console.log('\\nIcônes générées dans game/assets/.');
+  console.log('\nIcônes générées dans game/assets/ et game/icons/.');
   console.log('Décline toutes les tailles avec :  npx @capacitor/assets generate');
 })();

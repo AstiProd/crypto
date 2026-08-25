@@ -167,6 +167,35 @@ DemoProvider.prototype.privacyOptions = function () {
 };
 
 /* ------------------------------------------------------------------ */
+/*  Fournisseur 3 — portail de jeux HTML5 (web)                        */
+/*  Les portails (GameMonetize, GameDistribution, CrazyGames…) exposent */
+/*  un SDK global qui ouvre une vidéo et résout une promesse. On s'y    */
+/*  branche s'il est présent, sinon on retombe sur la démo.             */
+/* ------------------------------------------------------------------ */
+function PortalProvider(sdk, fallback) { this.sdk = sdk; this.fallback = fallback; }
+PortalProvider.prototype.init = function () { return Promise.resolve(true); };
+PortalProvider.prototype.call = function (kind) {
+  var s = this.sdk;
+  try {
+    if (typeof s.showBanner === 'function') return Promise.resolve(s.showBanner(kind));
+    if (typeof s.showAd === 'function') return Promise.resolve(s.showAd(kind));
+  } catch (e) { /* le SDK a refusé : on ne bloque pas le jeu */ }
+  return Promise.reject(new Error('sdk'));
+};
+PortalProvider.prototype.rewarded = function () {
+  var self = this;
+  return this.call('rewarded').then(function () { return true; })
+    .catch(function () { return self.fallback.rewarded(); });
+};
+PortalProvider.prototype.interstitial = function () {
+  var self = this;
+  return this.call('interstitial').then(function () { return true; })
+    .catch(function () { return self.fallback.interstitial(); });
+};
+PortalProvider.prototype.banner = function () { return Promise.resolve(); };
+PortalProvider.prototype.privacyOptions = function () { return this.fallback.privacyOptions(); };
+
+/* ------------------------------------------------------------------ */
 /*  Gestionnaire                                                       */
 /* ------------------------------------------------------------------ */
 var Ads = {
@@ -191,7 +220,9 @@ var Ads = {
       var platform = cap.getPlatform ? cap.getPlatform() : 'android';
       this.provider = new AdMobProvider(plugin, platform);
     } else {
-      this.provider = new DemoProvider();
+      var demo = new DemoProvider();
+      var portal = (CFG.webSdk === 'portal') && (window.sdk || window.gdsdk || window.CrazyGames);
+      this.provider = portal ? new PortalProvider(portal, demo) : demo;
     }
     return this.provider.init()
       .then(function () {
