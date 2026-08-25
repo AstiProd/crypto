@@ -2269,8 +2269,9 @@ function creditsPulse() {
 
 function closeAll() {
   overlay.classList.remove('on');
-  ['panelShop', 'panelUpgrades', 'panelMenu', 'panelWelcome', 'panelOffline'].forEach(function (id) {
-    el(id).classList.remove('on');
+  // tous les panneaux, sans liste à maintenir
+  Array.prototype.forEach.call(document.querySelectorAll('.panel'), function (p) {
+    p.classList.remove('on');
   });
 }
 function openPanel(id) {
@@ -2281,7 +2282,7 @@ function openPanel(id) {
 }
 overlay.addEventListener('click', closeAll);
 document.addEventListener('click', function (e) {
-  if (e.target.matches('[data-close], .close')) closeAll();
+  if (e.target.closest('[data-close], .close')) closeAll();
 });
 
 /* ---------- boutique ---------- */
