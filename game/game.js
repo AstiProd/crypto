@@ -620,69 +620,92 @@ function updateCarrier(a, dt, cfg) {
   }
 }
 
-/* Achat progressif : il suffit de rester sur la dalle (socle ou porte de zone) */
-function payWhileStanding(dt, px, py, radius, cost, paid, label) {
-  if (dist2(S.player.x, S.player.y, px, py) > radius * radius) return -1;
-  if (S.credits <= 0) {
-    hint('Il te faut des crédits : ' + fmt(Math.ceil(cost - paid)) + ' ◈ restants', 1.2);
-    return -1;
-  }
-  var rate = Math.max(cost / 3.2, 30);
-  var amount = Math.min(rate * dt, S.credits, cost - paid);
-  S.credits -= amount;
-  if (Math.random() < dt * 14) burst(px, py, 0.15, '#48e2c6', 2, 0.5);
-  return paid + amount;
+/* Achat progressif : il faut d'abord MAINTENIR la position, puis rester payer.
+   Sans ce délai d'amorçage, un simple passage sur une dalle vidait le compte. */
+var ARM_TIME = 0.8;
+var arm = { id: null, t: 0 };
+
+function armProgress(id) {
+  return arm.id === id ? clamp(arm.t / ARM_TIME, 0, 1) : 0;
 }
 
 function updateUnlock(dt) {
-  var i, p;
+  var i, target = null;
 
-  /* 1. portes de zone */
+  /* 1. sur quelle dalle achetable se trouve-t-on ? */
   for (i = 0; i < ZONES.length; i++) {
     var z = ZONES[i];
     if (!z.door || S.zones[z.id]) continue;
-    var paid = payWhileStanding(dt, z.door.x, z.door.y, 1.05, z.cost, S.zonePaid[z.id] || 0);
-    if (paid < 0) continue;
-    S.zonePaid[z.id] = paid;
-    if (paid >= z.cost - 0.5) {
-      S.zones[z.id] = true;
-      S.zonePaid[z.id] = z.cost;
-      // le premier socle de la zone est offert, avec une foreuse à la hauteur de la base
-      var first = S.pads[z.pads[0]];
-      first.unlocked = true; first.paid = first.cost; first.pop = 1;
-      first.drill = { tier: clamp(S.bestTier - 2, 0, MAX_TIER), timer: 0, pulse: 1, spin: 0 };
-      Audio_.unlock();
-      burst(z.door.x, z.door.y, 0.5, '#ffca3a', 34, 1.7);
-      ring(z.door.x, z.door.y, 0.1, '#ffca3a');
-      floater(z.door.x, z.door.y, 1.8, z.name + ' ouverte !', '#ffd76b');
-      toast(z.name + ' débloquée 🔓', 'good');
-      if (window.Ads) { window.Ads.unlocks++; window.Ads.maybeInterstitial('zone_debloquee'); }
-      save();
+    if (dist2(S.player.x, S.player.y, z.door.x, z.door.y) < 1.05 * 1.05) {
+      target = { id: 'zone:' + z.id, kind: 'zone', zone: z,
+                 x: z.door.x, y: z.door.y, cost: z.cost, paid: S.zonePaid[z.id] || 0 };
+      break;
     }
+  }
+  if (!target) {
+    for (i = 0; i < S.pads.length; i++) {
+      var p = S.pads[i];
+      if (p.unlocked || !S.zones[p.zone]) continue;
+      if (dist2(S.player.x, S.player.y, p.x, p.y) < 0.95 * 0.95) {
+        target = { id: 'pad:' + i, kind: 'pad', pad: p, x: p.x, y: p.y, cost: p.cost, paid: p.paid };
+        break;
+      }
+    }
+  }
+  if (!target) { arm.id = null; arm.t = 0; return; }
+
+  /* 2. amorçage : rien n'est débité tant que la position n'est pas tenue */
+  if (arm.id !== target.id) { arm.id = target.id; arm.t = 0; }
+  arm.t += dt;
+  if (arm.t < ARM_TIME) {
+    hint('Maintiens la position pour acheter — ' + fmt(Math.ceil(target.cost - target.paid)) + ' ◈', 0.6);
     return;
   }
 
-  /* 2. socles (uniquement dans une zone ouverte) */
-  for (i = 0; i < S.pads.length; i++) {
-    p = S.pads[i];
-    if (p.unlocked || !S.zones[p.zone]) continue;
-    var pp = payWhileStanding(dt, p.x, p.y, 0.95, p.cost, p.paid);
-    if (pp < 0) continue;
-    p.paid = pp;
-    if (p.paid >= p.cost - 0.5) {
-      p.unlocked = true;
-      p.paid = p.cost;
-      p.drill = { tier: 0, timer: 0, pulse: 1, spin: 0 };
-      p.pop = 1;
-      Audio_.unlock();
-      burst(p.x, p.y, 0.5, '#7ab8ff', 30, 1.5);
-      ring(p.x, p.y, 0.1, '#7ab8ff');
-      floater(p.x, p.y, 1.6, 'Socle actif !', '#7ab8ff');
-      toast('Nouveau socle en ligne 🛰️', 'good');
-      save();
-      if (window.Ads) { window.Ads.unlocks++; window.Ads.maybeInterstitial('socle_debloque'); }
-    }
+  /* 3. paiement progressif */
+  if (S.credits <= 0) {
+    hint('Il te faut des crédits : ' + fmt(Math.ceil(target.cost - target.paid)) + ' ◈ restants', 1.2);
     return;
+  }
+  var rate = Math.max(target.cost / 3.2, 30);
+  var amount = Math.min(rate * dt, S.credits, target.cost - target.paid);
+  S.credits -= amount;
+  var paid = target.paid + amount;
+  if (Math.random() < dt * 14) burst(target.x, target.y, 0.15, '#48e2c6', 2, 0.5);
+
+  if (target.kind === 'zone') {
+    var zz = target.zone;
+    S.zonePaid[zz.id] = paid;
+    if (paid < zz.cost - 0.5) return;
+    S.zones[zz.id] = true;
+    S.zonePaid[zz.id] = zz.cost;
+    var first = S.pads[zz.pads[0]];
+    first.unlocked = true; first.paid = first.cost; first.pop = 1;
+    first.drill = { tier: clamp(S.bestTier - 2, 0, MAX_TIER), timer: 0, pulse: 1, spin: 0 };
+    arm.id = null;
+    Audio_.unlock();
+    burst(zz.door.x, zz.door.y, 0.5, '#ffca3a', 34, 1.7);
+    ring(zz.door.x, zz.door.y, 0.1, '#ffca3a');
+    floater(zz.door.x, zz.door.y, 1.8, zz.name + ' ouverte !', '#ffd76b');
+    toast(zz.name + ' débloquée 🔓', 'good');
+    save();
+    if (window.Ads) { window.Ads.unlocks++; window.Ads.maybeInterstitial('zone_debloquee'); }
+  } else {
+    var pp = target.pad;
+    pp.paid = paid;
+    if (pp.paid < pp.cost - 0.5) return;
+    pp.unlocked = true;
+    pp.paid = pp.cost;
+    pp.drill = { tier: 0, timer: 0, pulse: 1, spin: 0 };
+    pp.pop = 1;
+    arm.id = null;
+    Audio_.unlock();
+    burst(pp.x, pp.y, 0.5, '#7ab8ff', 30, 1.5);
+    ring(pp.x, pp.y, 0.1, '#7ab8ff');
+    floater(pp.x, pp.y, 1.6, 'Socle actif !', '#7ab8ff');
+    toast('Nouveau socle en ligne 🛰️', 'good');
+    save();
+    if (window.Ads) { window.Ads.unlocks++; window.Ads.maybeInterstitial('socle_debloque'); }
   }
 }
 
@@ -890,7 +913,7 @@ function updateHint() {
   for (var zi = 1; zi < ZONES.length; zi++) {
     var z = ZONES[zi];
     if (!S.zones[z.id] && S.credits >= z.cost) {
-      msg = z.name + ' est à ta portée — va sur sa dalle 🔒';
+      msg = z.name + ' : dalle 🔒 disponible';
       break;
     }
   }
@@ -1283,12 +1306,22 @@ function drawSocket(p, t) {
   if (!p.unlocked) {
     discStroke(p.x, p.y, 0.145, 0.44, rgba('#7ab8ff', 0.18), 1.5);
     // jauge d'achat
+    var sp = toScreen(p.x, p.y, 0.145);
+    var rx = 0.62 * (TILE_W / 2) * cam.zoom, ry = 0.62 * (TILE_H / 2) * cam.zoom;
     if (p.paid > 0) {
-      var s = toScreen(p.x, p.y, 0.145);
       var frac = clamp(p.paid / p.cost, 0, 1);
       ctx.beginPath();
-      ctx.ellipse(s.x, s.y, 0.62 * (TILE_W / 2) * cam.zoom, 0.62 * (TILE_H / 2) * cam.zoom, 0, -Math.PI / 2, -Math.PI / 2 + frac * 6.2832);
+      ctx.ellipse(sp.x, sp.y, rx, ry, 0, -Math.PI / 2, -Math.PI / 2 + frac * 6.2832);
       ctx.strokeStyle = '#48e2c6'; ctx.lineWidth = 5 * cam.zoom; ctx.stroke();
+    }
+    var ap = armProgress('pad:' + p.i);
+    if (ap > 0 && ap < 1) {                       // maintien en cours
+      ctx.save();
+      ctx.setLineDash([6 * cam.zoom, 5 * cam.zoom]);
+      ctx.beginPath();
+      ctx.ellipse(sp.x, sp.y, rx * 1.2, ry * 1.2, 0, -Math.PI / 2, -Math.PI / 2 + ap * 6.2832);
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 4 * cam.zoom; ctx.stroke();
+      ctx.restore();
     }
   }
 }
@@ -1341,14 +1374,22 @@ function drawDoor(z, t) {
   if (open) {
     return;
   }
-  if (z.paidFrac === undefined) z.paidFrac = 0;
   var frac = clamp((S.zonePaid[z.id] || 0) / z.cost, 0, 1);
+  var dp = toScreen(d.x, d.y, 0.17);
+  var drx = 0.7 * (TILE_W / 2) * cam.zoom, dry = 0.7 * (TILE_H / 2) * cam.zoom;
   if (frac > 0) {
-    var sp = toScreen(d.x, d.y, 0.17);
     ctx.beginPath();
-    ctx.ellipse(sp.x, sp.y, 0.7 * (TILE_W / 2) * cam.zoom, 0.7 * (TILE_H / 2) * cam.zoom,
-                0, -Math.PI / 2, -Math.PI / 2 + frac * 6.2832);
+    ctx.ellipse(dp.x, dp.y, drx, dry, 0, -Math.PI / 2, -Math.PI / 2 + frac * 6.2832);
     ctx.strokeStyle = '#ffca3a'; ctx.lineWidth = 6 * cam.zoom; ctx.stroke();
+  }
+  var dap = armProgress('zone:' + z.id);
+  if (dap > 0 && dap < 1) {
+    ctx.save();
+    ctx.setLineDash([6 * cam.zoom, 5 * cam.zoom]);
+    ctx.beginPath();
+    ctx.ellipse(dp.x, dp.y, drx * 1.18, dry * 1.18, 0, -Math.PI / 2, -Math.PI / 2 + dap * 6.2832);
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 4 * cam.zoom; ctx.stroke();
+    ctx.restore();
   }
   // cadenas
   var s2 = toScreen(d.x, d.y, 0.45 + Math.sin(t * 2) * 0.05);
