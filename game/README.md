@@ -96,6 +96,18 @@ npm run ios          # ouvre Xcode (nécessite un Mac)
 - `store/data-safety.md` — réponses aux questionnaires de collecte de données
 - `store/screenshots/` — captures aux formats exigés (`node tools/make-screenshots.js`)
 
+## Progression : objectifs, contrats, prestige
+
+- **Objectifs guidés** — une carte en haut de l'écran affiche toujours la prochaine étape
+  (« Ramasse un cristal », « Ouvre la soute », « Atteins Mk-VIII »…), avec sa prime, une
+  barre de progression et une **flèche dorée** qui pointe la cible dans le monde, même
+  hors écran. 18 étapes, de la première minute au rang ultime.
+- **Contrats** — trois commandes en cours ; environ 40 % sont **urgentes** (minuteur ⏱)
+  et paient **le double**. Une commande expirée est aussitôt remplacée.
+- **Prestige** — au-delà d'un million de crédits gagnés dans la partie, la base peut être
+  relancée : tout repart de zéro contre des **cristaux de commandement**, chacun valant
+  **+5 % de revenus, définitivement**. Gain = (crédits de la partie / 1 M) ^ 0,55.
+
 ## Zones, logistique et marché
 
 **Trois zones** composent la base. La zone minière est ouverte dès le départ ; les deux
@@ -106,6 +118,7 @@ autres s'achètent en se posant sur leur dalle 🔒, comme les socles.
 | Zone minière | — | 10 socles bien espacés, à ciel ouvert |
 | **Soute ASTRA-1** | 25 K ◈ | la soute de la fusée s'ouvre en coupe : 3 socles à l'abri |
 | **Serre hydroponique** | 400 K ◈ | le dôme se pressurise : 3 socles sous verre |
+| **Station orbitale** | 4,5 M ◈ | une passerelle se déploie vers une seconde plateforme : 3 socles en orbite |
 
 Ouvrir une zone offre son premier socle, équipé d'une foreuse calée sur ton meilleur rang.
 
@@ -117,6 +130,7 @@ qui glissent dessus.
 | --- | --- |
 | Mine → Raffinerie | ramasse les cristaux de la zone minière et les verse dans la trémie |
 | Soute → Raffinerie | idem depuis la soute (nécessite la zone) |
+| Station → Raffinerie | ramène les cristaux de l'orbite par la passerelle |
 | Raffinerie → Marché | emporte les puces et les vend toutes seules |
 
 **Le marché** remplace le terminal : chaque vente est multipliée par le **cours des
@@ -128,8 +142,9 @@ marchandises. Une commande honorée est remplacée aussitôt, calée sur ton mei
 
 ## Contenu
 
-- 16 socles d'extraction répartis en 3 zones, 10 rangs de foreuses aux palettes distinctes
-- 3 lignes d'approvisionnement, marché à cours variable et contrats de livraison
+- 19 socles d'extraction répartis en 4 zones, 10 rangs de foreuses aux palettes distinctes
+- 4 lignes d'approvisionnement, marché à cours variable, contrats urgents et prestige
+- objectifs guidés avec fléchage dans le monde
 - Raffinerie (file d'attente, cuves, tapis roulant, plateau de sortie), terminal de crédits
 - 4 améliorations : bottes propulsées, sac dorsal, raffinerie, **drones ouvriers** (jusqu'à 4
   assistants autonomes : les pairs minent, les impairs convoient les crédits)

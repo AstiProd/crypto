@@ -99,6 +99,13 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block}
   .action-btn{padding:10px 11px;font-size:13.5px;gap:6px}
   .action-btn .ico{font-size:16px}
 }
+/* minuteur des commandes urgentes */
+.cd{
+  display:inline-flex;align-items:center;gap:4px;margin-left:8px;padding:1px 8px;
+  border-radius:999px;background:rgba(255,202,58,.18);color:#ffd76b;
+  font-size:11.5px;font-weight:800;font-variant-numeric:tabular-nums
+}
+.cd.urgent{background:rgba(255,122,138,.2);color:#ffc9cf}
 /* barre de progression des contrats */
 .bar{height:8px;border-radius:4px;background:rgba(255,255,255,.12);overflow:hidden;margin-top:6px}
 .bar span{display:block;height:100%;background:linear-gradient(90deg,#48e2c6,#7ab8ff);border-radius:4px}
@@ -117,6 +124,27 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block}
 .action-btn.glow{animation:glow 1.6s ease-in-out infinite}
 @keyframes glow{0%,100%{box-shadow:0 5px 0 rgba(0,0,0,.4),0 0 0 rgba(72,226,198,0)}
   50%{box-shadow:0 5px 0 rgba(0,0,0,.4),0 0 22px rgba(72,226,198,.6)}}
+
+/* ---------- carte objectif ---------- */
+.goal-card{
+  position:absolute;top:calc(92px + var(--safe-top));left:12px;
+  width:min(232px,62vw);padding:8px 12px 10px;border-radius:14px;
+  background:linear-gradient(180deg,rgba(27,43,77,.94),rgba(16,26,48,.94));
+  border:2px solid rgba(255,202,58,.35);
+  box-shadow:0 6px 0 rgba(0,0,0,.3);
+  pointer-events:none;
+}
+.goal-card.done{animation:goalPop .45s ease}
+@keyframes goalPop{0%{transform:scale(1)}40%{transform:scale(1.06)}100%{transform:scale(1)}}
+.goal-eyebrow{
+  display:block;font-size:9.5px;font-weight:800;letter-spacing:.12em;
+  text-transform:uppercase;color:#ffd76b;margin-bottom:2px
+}
+.goal-card b{display:block;font-size:13.5px;line-height:1.25;color:#eaf2ff}
+.goal-bar{height:5px;border-radius:3px;background:rgba(255,255,255,.14);overflow:hidden;margin-top:7px;display:none}
+.goal-bar.on{display:block}
+.goal-bar span{display:block;height:100%;background:linear-gradient(90deg,#ffd76b,#f2a726);border-radius:3px;transition:width .25s ease}
+.goal-reward{display:block;margin-top:5px;font-size:11.5px;font-weight:800;color:#8affe4}
 
 /* ---------- joystick ---------- */
 .joystick{

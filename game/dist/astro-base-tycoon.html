@@ -104,6 +104,13 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block}
   .action-btn{padding:10px 11px;font-size:13.5px;gap:6px}
   .action-btn .ico{font-size:16px}
 }
+/* minuteur des commandes urgentes */
+.cd{
+  display:inline-flex;align-items:center;gap:4px;margin-left:8px;padding:1px 8px;
+  border-radius:999px;background:rgba(255,202,58,.18);color:#ffd76b;
+  font-size:11.5px;font-weight:800;font-variant-numeric:tabular-nums
+}
+.cd.urgent{background:rgba(255,122,138,.2);color:#ffc9cf}
 /* barre de progression des contrats */
 .bar{height:8px;border-radius:4px;background:rgba(255,255,255,.12);overflow:hidden;margin-top:6px}
 .bar span{display:block;height:100%;background:linear-gradient(90deg,#48e2c6,#7ab8ff);border-radius:4px}
@@ -122,6 +129,27 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block}
 .action-btn.glow{animation:glow 1.6s ease-in-out infinite}
 @keyframes glow{0%,100%{box-shadow:0 5px 0 rgba(0,0,0,.4),0 0 0 rgba(72,226,198,0)}
   50%{box-shadow:0 5px 0 rgba(0,0,0,.4),0 0 22px rgba(72,226,198,.6)}}
+
+/* ---------- carte objectif ---------- */
+.goal-card{
+  position:absolute;top:calc(92px + var(--safe-top));left:12px;
+  width:min(232px,62vw);padding:8px 12px 10px;border-radius:14px;
+  background:linear-gradient(180deg,rgba(27,43,77,.94),rgba(16,26,48,.94));
+  border:2px solid rgba(255,202,58,.35);
+  box-shadow:0 6px 0 rgba(0,0,0,.3);
+  pointer-events:none;
+}
+.goal-card.done{animation:goalPop .45s ease}
+@keyframes goalPop{0%{transform:scale(1)}40%{transform:scale(1.06)}100%{transform:scale(1)}}
+.goal-eyebrow{
+  display:block;font-size:9.5px;font-weight:800;letter-spacing:.12em;
+  text-transform:uppercase;color:#ffd76b;margin-bottom:2px
+}
+.goal-card b{display:block;font-size:13.5px;line-height:1.25;color:#eaf2ff}
+.goal-bar{height:5px;border-radius:3px;background:rgba(255,255,255,.14);overflow:hidden;margin-top:7px;display:none}
+.goal-bar.on{display:block}
+.goal-bar span{display:block;height:100%;background:linear-gradient(90deg,#ffd76b,#f2a726);border-radius:3px;transition:width .25s ease}
+.goal-reward{display:block;margin-top:5px;font-size:11.5px;font-weight:800;color:#8affe4}
 
 /* ---------- joystick ---------- */
 .joystick{
@@ -349,6 +377,13 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block}
       <span id="carryLabel">0 / 8</span>
     </div>
 
+    <div class="goal-card" id="goalCard">
+      <span class="goal-eyebrow">Objectif</span>
+      <b id="goalText">…</b>
+      <div class="goal-bar"><span id="goalFill"></span></div>
+      <span class="goal-reward" id="goalReward"></span>
+    </div>
+
     <div class="bottom-bar">
       <button class="action-btn" id="btnShop"><span class="ico">🛰️</span><span>Foreuses</span></button>
       <button class="action-btn" id="btnContracts"><span class="ico">📋</span><span>Contrats</span><span class="badge" id="contractBadge">0</span></button>
@@ -420,7 +455,8 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block}
         <li><b>Reste sur un socle verrouillé</b> pour l'acheter, puis <b>glisse une foreuse sur une autre</b> du même rang pour fusionner.</li>
         <li><b>Ouvre de nouvelles zones</b> — la soute de la fusée, la serre — en te posant sur leur dalle 🔒.</li>
         <li><b>Achète des convoyeurs</b> (bouton <b>Base</b>) : ils acheminent et vendent à ta place, même hors ligne.</li>
-        <li><b>Honore les contrats</b> pour de grosses primes, et surveille le <b>cours du marché</b>.</li>
+        <li><b>Honore les contrats</b> — les urgents ⏱ paient double — et surveille le <b>cours du marché</b>.</li>
+        <li><b>Suis la flèche dorée</b> : elle pointe toujours vers ton objectif du moment.</li>
       </ol>
       <button class="cta" id="btnPlay">Décoller 🚀</button>
     </div>
@@ -822,7 +858,7 @@ var TILE_H = 44;          // hauteur d'une tuile projetée (iso 2:1)
 var H_UNIT = 46;          // pixels par unité de hauteur
 var SAVE_KEY = 'astro-base-tycoon-v1';
 var MAX_TIER = 9;         // index max (rang 10)
-var PAD_COUNT = 16;          // 10 dans la mine, 3 dans la soute, 3 sous la serre
+var PAD_COUNT = 19;          // 10 mine, 3 soute, 3 serre, 3 station orbitale
 
 var clamp = function (v, a, b) { return v < a ? a : v > b ? b : v; };
 var lerp = function (a, b, t) { return a + (b - a) * t; };
@@ -859,9 +895,10 @@ var TIERS = [
 function drillValue(t) { return Math.round(5 * Math.pow(2.15, t)); }      // valeur d'un cristal
 function drillPeriod(t) { return 4.6 * Math.pow(0.93, t); }               // secondes entre deux cristaux
 function padCost(i) {                                                    // prix du socle n°i
-  if (i < 10) return Math.round(60 * Math.pow(2.4, i - 1));              // mine à ciel ouvert
+  if (i < 10) return Math.round(35 * Math.pow(2.35, i - 1));             // mine à ciel ouvert
   if (i < 13) return Math.round(40000 * Math.pow(2.5, i - 10));          // soute
-  return Math.round(700000 * Math.pow(2.5, i - 13));                     // serre
+  if (i < 16) return Math.round(700000 * Math.pow(2.5, i - 13));         // serre
+  return Math.round(9000000 * Math.pow(2.6, i - 16));                    // station orbitale
 }
 function shopCost(bought) { return Math.round(80 * Math.pow(1.75, bought)); }
 
@@ -933,29 +970,41 @@ var S = {
   started: false,
   boost: 0,              // secondes restantes de recettes doublées (pub récompensée)
   pendingOffline: 0,     // montant hors-ligne, doublable une fois par pub
-  zones: { mine: true, bay: false, dome: false },
-  zonePaid: { bay: 0, dome: 0 },
-  lines: { mine: 0, bay: 0, market: 0 },   // niveaux des lignes d'approvisionnement
+  zones: { mine: true, bay: false, dome: false, orbit: false },
+  zonePaid: { bay: 0, dome: 0, orbit: 0 },
+  lines: { mine: 0, bay: 0, orbit: 0, market: 0 },   // niveaux des lignes d'approvisionnement
   transit: [],           // colis en cours de convoyage
   contracts: [],         // commandes en cours
   contractSeed: 0,
+  contractsDone: 0,
+  runMined: 0,           // compteurs remis à zéro à chaque relance
+  runSales: 0,
+  runContracts: 0,
+  prestige: 0,           // cristaux de commandement (bonus permanent)
+  prestigeCount: 0,
+  runEarned: 0,          // gains de la partie en cours (base du prestige)
+  goal: 0,               // objectif courant
   market: 1              // cours des cristaux (multiplicateur de vente)
 };
 
-var FX = { floaters: [], parts: [], rings: [] };
+var FX = { floaters: [], parts: [], rings: [], shake: 0, flash: 0 };
+function shakeCam(mag) { FX.shake = Math.max(FX.shake, mag); }
+function flash(a) { FX.flash = Math.max(FX.flash, a); }
 var cam = { x: 7.5, y: 7.5, zoom: 1 };
 
 /* Position des socles : deux rangées dans la zone minière */
 /* Emplacement des socles : 10 dans la mine à ciel ouvert, puis les zones */
 var BAY_PADS = [{ x: 5.9, y: 12.3 }, { x: 8.5, y: 12.3 }, { x: 7.2, y: 14.4 }];
 var GREENHOUSE_PADS = [{ x: 19.2, y: 2.6 }, { x: 21.2, y: 2.6 }, { x: 20.2, y: 4.4 }];
+var ORBIT_PADS = [{ x: 28.4, y: 5.2 }, { x: 30.8, y: 5.2 }, { x: 29.6, y: 8.6 }];
 function padPos(i) {
   if (i < 10) {
     var col = i % 5, row = (i / 5) | 0;
     return { x: 2.6 + col * 3.3, y: 2.2 + row * 3.4 };   // socles bien espacés
   }
   if (i < 13) return BAY_PADS[i - 10];
-  return GREENHOUSE_PADS[i - 13];
+  if (i < 16) return GREENHOUSE_PADS[i - 13];
+  return ORBIT_PADS[i - 16];
 }
 
 var REFINERY_POS = { x: 18.8, y: 10.6 };
@@ -966,6 +1015,11 @@ var TERMINAL_POS = MARKET_POS;                 // le terminal est devenu le marc
 var ROCKET_POS   = { x: 3.2, y: 11.0 };
 var DOME_POS     = { x: 20.2, y: 3.4 };
 var BAY_RECT     = { x0: 4.6, y0: 11.2, x1: 9.8, y1: 15.4 };
+/* Surfaces où l'on peut marcher : plateforme principale, passerelle, station */
+var MAIN_RECT    = { x0: 0, y0: 0, x1: 23, y1: 17 };
+var BRIDGE_RECT  = { x0: 21.5, y0: 6.5, x1: 27.5, y1: 8.7 };
+var STATION_RECT = { x0: 26.6, y0: 3.2, x1: 32.4, y1: 11.4 };
+var ORBIT_DOOR   = { x: 21.6, y: 7.6 };
 var BAY_DOOR     = { x: 10.5, y: 11.9 };       // rampe d'accès : on se pose dessus pour acheter
 var DOME_DOOR    = { x: 20.2, y: 6.5 };
 
@@ -975,7 +1029,9 @@ var ZONES = [
   { id: 'bay',  name: 'Soute ASTRA-1', cost: 25000, pads: [10,11,12], door: BAY_DOOR,
     desc: 'Ouvre la soute de la fusée : trois socles à l\'abri.' },
   { id: 'dome', name: 'Serre hydroponique', cost: 400000, pads: [13,14,15], door: DOME_DOOR,
-    desc: 'Le dôme se pressurise : trois socles de plus sous verre.' }
+    desc: 'Le dôme se pressurise : trois socles de plus sous verre.' },
+  { id: 'orbit', name: 'Station orbitale', cost: 4500000, pads: [16,17,18], door: ORBIT_DOOR,
+    desc: 'Déploie la passerelle vers la station : trois socles en orbite.' }
 ];
 
 /* Lignes d'approvisionnement : tracés suivis par les colis */
@@ -986,6 +1042,10 @@ var LINES = [
   { id: 'bay', name: 'Convoyeur Soute → Raffinerie', zone: 'bay', carries: 'ore',
     base: 22000, icon: '🚀',
     path: [{ x: 10.1, y: 12.0 }, { x: 16.4, y: 12.0 }, { x: 16.4, y: 10.0 }, { x: 21.2, y: 10.0 }, { x: 21.2, y: 12.2 }, { x: 20.1, y: 12.3 }] },
+  { id: 'orbit', name: 'Convoyeur Station → Raffinerie', zone: 'orbit', carries: 'ore',
+    base: 120000, icon: '🛰️',
+    path: [{ x: 28.0, y: 9.8 }, { x: 24.6, y: 9.8 }, { x: 24.6, y: 7.6 }, { x: 22.4, y: 7.6 },
+           { x: 22.4, y: 12.3 }, { x: 20.1, y: 12.3 }] },
   { id: 'market', name: 'Convoyeur Raffinerie → Marché', zone: 'mine', carries: 'chip',
     base: 9000, icon: '💠',
     path: [{ x: 17.4, y: 12.9 }, { x: 17.4, y: 15.6 }, { x: 12.6, y: 15.6 }, { x: 12.2, y: 14.9 }] }
@@ -994,9 +1054,12 @@ var LINE_MAX = 5;
 function lineCost(l) { return Math.round(l.base * Math.pow(3, S.lines[l.id])); }
 function lineRate(id) { return S.lines[id] * 0.45; }        // colis par seconde
 function lineLength(l) {
-  var d = 0;
-  for (var i = 1; i < l.path.length; i++) d += Math.hypot(l.path[i].x - l.path[i-1].x, l.path[i].y - l.path[i-1].y);
-  return d;
+  if (l._len === undefined) {                 // constante : calculée une seule fois
+    var d = 0;
+    for (var i = 1; i < l.path.length; i++) d += Math.hypot(l.path[i].x - l.path[i-1].x, l.path[i].y - l.path[i-1].y);
+    l._len = d;
+  }
+  return l._len;
 }
 /* Position d'un colis le long du tracé (0 → 1) */
 function pointOnLine(l, t) {
@@ -1027,7 +1090,7 @@ function newPlayer() {
 }
 function newDrone(i) {
   return {
-    x: 6 + i * 0.8, y: 9.4, vx: 0, vy: 0, face: 1, bob: Math.random() * 6,
+    x: 6 + i * 0.8, y: 9.4, vx: 0, vy: 0, face: 1, fly: true, bob: Math.random() * 6,
     carry: [], carryType: null, actTimer: 0, task: null, target: null
   };
 }
@@ -1045,12 +1108,13 @@ function initWorld() {
       pop: 0
     });
   }
-  S.zones = { mine: true, bay: false, dome: false };
-  S.zonePaid = { bay: 0, dome: 0 };
-  S.lines = { mine: 0, bay: 0, market: 0 };
+  S.zones = { mine: true, bay: false, dome: false, orbit: false };
+  S.zonePaid = { bay: 0, dome: 0, orbit: 0 };
+  S.lines = { mine: 0, bay: 0, orbit: 0, market: 0 };
   S.transit = [];
   S.contracts = [];
   S.contractSeed = 0;
+  S.runMined = 0; S.runSales = 0; S.runContracts = 0;
   S.market = 1;
   S.ores = [];
   S.player = newPlayer();
@@ -1079,6 +1143,12 @@ function save() {
       lines: S.lines,
       contracts: S.contracts,
       contractSeed: S.contractSeed,
+      contractsDone: S.contractsDone,
+      runMined: S.runMined, runSales: S.runSales, runContracts: S.runContracts,
+      prestige: S.prestige,
+      prestigeCount: S.prestigeCount,
+      runEarned: S.runEarned,
+      goal: S.goal,
       market: S.market,
       ads: window.Ads ? window.Ads.serialize() : null,
       lastSeen: Date.now(),
@@ -1111,6 +1181,14 @@ function load() {
     if (d.lines) for (var l in S.lines) if (typeof d.lines[l] === 'number') S.lines[l] = d.lines[l];
     if (d.contracts) S.contracts = d.contracts;
     S.contractSeed = d.contractSeed || 0;
+    S.contractsDone = d.contractsDone || 0;
+    S.runMined = d.runMined || 0;
+    S.runSales = d.runSales || 0;
+    S.runContracts = d.runContracts || 0;
+    S.prestige = d.prestige || 0;
+    S.prestigeCount = d.prestigeCount || 0;
+    S.runEarned = d.runEarned || 0;
+    S.goal = d.goal || 0;
     S.market = d.market || 1;
     if (window.Ads) window.Ads.restore(d.ads);
     S.lastSeen = d.lastSeen || Date.now();
@@ -1139,8 +1217,9 @@ function offlineGains() {
 /* ------------------------------------------------------------------ */
 /*  5. EFFETS                                                          */
 /* ------------------------------------------------------------------ */
-function floater(x, y, z, text, color) {
-  FX.floaters.push({ x: x, y: y, z: z, t: 0, life: 1.05, text: text, color: color || '#fff' });
+function floater(x, y, z, text, color, big) {
+  FX.floaters.push({ x: x, y: y, z: z, t: 0, life: big ? 1.8 : 1.05,
+                     text: text, color: color || '#fff', big: big });
 }
 function burst(x, y, z, color, n, power) {
   n = n || 10; power = power || 1;
@@ -1156,6 +1235,8 @@ function ring(x, y, z, color) { FX.rings.push({ x: x, y: y, z: z, t: 0, life: 0.
 
 function updateFX(dt) {
   var i;
+  if (FX.shake > 0) FX.shake = Math.max(0, FX.shake - dt * 46);
+  if (FX.flash > 0) FX.flash = Math.max(0, FX.flash - dt * 2.6);
   for (i = FX.floaters.length - 1; i >= 0; i--) {
     var f = FX.floaters[i]; f.t += dt; f.z += dt * 1.05;
     if (f.t >= f.life) FX.floaters.splice(i, 1);
@@ -1305,10 +1386,14 @@ function resolveDrag(sx, sy) {
     from.drill = null; to.pop = 1;
     S.bestTier = Math.max(S.bestTier, to.drill.tier);
     Audio_.merge();
-    burst(to.x, to.y, 0.9, TIERS[to.drill.tier].glow, 26, 1.4);
-    ring(to.x, to.y, 0.15, TIERS[to.drill.tier].glow);
-    floater(to.x, to.y, 1.5, TIERS[to.drill.tier].name + ' !', TIERS[to.drill.tier].glow);
-    toast('Fusion réussie : ' + TIERS[to.drill.tier].name, 'good');
+    var T = TIERS[to.drill.tier];
+    burst(to.x, to.y, 0.9, T.glow, 46, 1.9);
+    ring(to.x, to.y, 0.15, T.glow);
+    ring(to.x, to.y, 0.15, '#ffffff');
+    shakeCam(Math.min(14, 8 + to.drill.tier));
+    flash(Math.min(0.36, 0.2 + to.drill.tier * 0.02));
+    floater(to.x, to.y, 1.6, T.name + ' !', T.glow, true);
+    toast('Fusion réussie : ' + T.name, 'good');
   } else {                                           // échange
     var tmp = to.drill; to.drill = from.drill; from.drill = tmp;
     to.pop = 1; from.pop = 1; Audio_.drop(2);
@@ -1319,10 +1404,25 @@ function resolveDrag(sx, sy) {
 /* ------------------------------------------------------------------ */
 /*  7. SIMULATION                                                      */
 /* ------------------------------------------------------------------ */
-var WORLD_W = 23, WORLD_H = 17;
+var WORLD_W = 32.4, WORLD_H = 17;
+
+/* Surfaces praticables : la passerelle et la station n'existent qu'une fois
+   la zone orbitale achetée. */
+function inRect(r, x, y, m) {
+  m = m || 0;
+  return x >= r.x0 - m && x <= r.x1 + m && y >= r.y0 - m && y <= r.y1 + m;
+}
+function walkable(x, y) {
+  if (inRect(MAIN_RECT, x, y, -0.7)) return true;
+  if (!S.zones.orbit) return false;
+  return inRect(BRIDGE_RECT, x, y, -0.3) || inRect(STATION_RECT, x, y, -0.4);
+}
 var ORE_PER_PAD = 8, QUEUE_MAX = 40, TRAY_MAX = 26;
 
+var COLL = [], collFrame = -1, frameNo = 0;
 function colliders() {
+  if (collFrame === frameNo) return COLL;      // une seule construction par image
+  collFrame = frameNo;
   var c = [
     { x: REFINERY_POS.x, y: REFINERY_POS.y, r: 1.55 },
     { x: MARKET_POS.x, y: MARKET_POS.y, r: 1.05 },
@@ -1333,10 +1433,12 @@ function colliders() {
     var p = S.pads[i];
     if (p.drill) c.push({ x: p.x, y: p.y, r: 0.72 });
   }
-  return c;
+  COLL = c;
+  return COLL;
 }
 
 function moveActor(a, dx, dy, speed, dt) {
+  a.ox = a.x; a.oy = a.y;
   var len = Math.hypot(dx, dy);
   if (len > 0.001) {
     dx /= len; dy /= len;
@@ -1349,8 +1451,12 @@ function moveActor(a, dx, dy, speed, dt) {
     a.moving = true;
   } else { a.moving = false; }
 
-  a.x = clamp(a.x, 0.7, WORLD_W - 0.7);
-  a.y = clamp(a.y, 0.7, WORLD_H - 0.7);
+  if (!a.fly && !walkable(a.x, a.y)) {          // on glisse le long du bord au lieu de tomber
+    if (walkable(a.x, a.oy !== undefined ? a.oy : a.y)) a.y = a.oy;
+    else if (walkable(a.ox !== undefined ? a.ox : a.x, a.y)) a.x = a.ox;
+    else { a.x = a.ox === undefined ? a.x : a.ox; a.y = a.oy === undefined ? a.y : a.oy; }
+  }
+  if (a.fly) { a.x = clamp(a.x, 0.7, WORLD_W - 0.7); a.y = clamp(a.y, 0.7, WORLD_H - 0.7); }
 
   var cs = colliders();
   for (var i = 0; i < cs.length; i++) {
@@ -1385,7 +1491,7 @@ function updateCarrier(a, dt, cfg) {
       var ore = S.ores.splice(best, 1)[0];
       a.carry.push({ value: ore.value, tier: ore.tier }); a.carryType = 'ore';
       a.actTimer = cfg.rate;
-      S.totalMined++;
+      S.totalMined++; S.runMined++;
       if (cfg.sound) Audio_.pickup(a.carry.length);
       burst(ore.x, ore.y, 0.35, TIERS[ore.tier].glow, 4, 0.5);
       return;
@@ -1617,15 +1723,162 @@ function updateLines(dt) {
 
 /* Vente d'une puce au marché : bonus de pub × cours du jour */
 function sell(chip, fx, fy) {
-  var mult = (S.boost > 0 ? (adCfg('boost').multiplier || 2) : 1) * S.market;
+  var mult = (S.boost > 0 ? (adCfg('boost').multiplier || 2) : 1) * S.market * prestigeMult();
   var gain = Math.round(chip.value * mult);
-  S.credits += gain; S.totalEarned += gain;
+  S.credits += gain; S.totalEarned += gain; S.runEarned += gain; S.runSales++;
   creditContracts(chip.tier);
   floater(fx, fy, 1.4, '+' + fmt(gain) + (S.boost > 0 ? ' ×2' : ''),
           S.boost > 0 ? '#ffd76b' : '#8affe4');
   burst(fx, fy, 1.1, S.boost > 0 ? '#ffca3a' : '#48e2c6', 5, 0.6);
   creditsPulse();
   return gain;
+}
+
+/* ---- Objectifs : une prochaine étape toujours visible ---- */
+function equipped() {
+  var n = 0;
+  for (var i = 0; i < S.pads.length; i++) if (S.pads[i].drill) n++;
+  return n;
+}
+function nearestOre() {
+  var best = null, bd = 1e9;
+  for (var i = 0; i < S.ores.length; i++) {
+    var o = S.ores[i], d = dist2(S.player.x, S.player.y, o.x, o.y);
+    if (d < bd) { bd = d; best = o; }
+  }
+  return best;
+}
+function firstLockedPad() {
+  for (var i = 0; i < S.pads.length; i++) {
+    var p = S.pads[i];
+    if (!p.unlocked && S.zones[p.zone]) return p;
+  }
+  return null;
+}
+function zoneDoor(id) {
+  for (var i = 0; i < ZONES.length; i++) if (ZONES[i].id === id) return ZONES[i].door;
+  return null;
+}
+function anyLine() {
+  return S.lines.mine + S.lines.bay + S.lines.orbit + S.lines.market;
+}
+/* Cible du fléchage : où le joueur doit aller maintenant */
+function haulTarget() {
+  var p = S.player;
+  if (p.carryType === 'chip' && p.carry.length) return MARKET_POS;
+  if (p.carryType === 'ore' && p.carry.length >= playerCap()) return REFINERY_IN;
+  if (S.refinery.tray.length && !p.carry.length) return REFINERY_OUT;
+  if (p.carryType === 'ore' && p.carry.length) return REFINERY_IN;
+  return nearestOre();
+}
+
+var GOALS = [
+  { txt: 'Ramasse un cristal sous la foreuse', reward: 20,
+    done: function () { return S.runMined >= 1; },
+    target: nearestOre },
+  { txt: 'Verse tes cristaux dans la raffinerie', reward: 40,
+    done: function () { return S.refinery.queue.length + S.refinery.tray.length > 0 || S.runSales > 0; },
+    target: function () { return S.player.carry.length ? REFINERY_IN : nearestOre(); } },
+  { txt: 'Encaisse tes puces au marché', reward: 80,
+    done: function () { return S.runSales > 0; },
+    target: haulTarget },
+  { txt: 'Achète un deuxième socle', reward: 150,
+    done: function () { return S.pads.filter(function (p) { return p.unlocked; }).length >= 2; },
+    prog: function () { return [S.pads.filter(function (p) { return p.unlocked; }).length, 2]; },
+    target: firstLockedPad },
+  { txt: 'Fusionne deux foreuses identiques', reward: 400,
+    done: function () { return S.bestTier >= 1; },
+    target: function () { return S.pads.filter(function (p) { return p.drill; })[0] || null; } },
+  { txt: 'Équipe 4 socles de foreuses', reward: 1200,
+    done: function () { return equipped() >= 4; },
+    prog: function () { return [equipped(), 4]; },
+    target: firstLockedPad },
+  { txt: 'Engage un drone ouvrier', reward: 3000,
+    done: function () { return S.up.drones >= 1; } },
+  { txt: 'Atteins le rang Mk-IV', reward: 8000,
+    done: function () { return S.bestTier >= 3; },
+    prog: function () { return [S.bestTier + 1, 4]; } },
+  { txt: 'Ouvre la soute de la fusée', reward: 20000,
+    done: function () { return !!S.zones.bay; },
+    target: function () { return zoneDoor('bay'); } },
+  { txt: 'Mets en service un convoyeur', reward: 40000,
+    done: function () { return anyLine() >= 1; } },
+  { txt: 'Honore un contrat de livraison', reward: 90000,
+    done: function () { return S.runContracts >= 1; } },
+  { txt: 'Atteins le rang Mk-VI', reward: 200000,
+    done: function () { return S.bestTier >= 5; },
+    prog: function () { return [S.bestTier + 1, 6]; } },
+  { txt: 'Pressurise la serre hydroponique', reward: 500000,
+    done: function () { return !!S.zones.dome; },
+    target: function () { return zoneDoor('dome'); } },
+  { txt: 'Équipe 12 socles', reward: 1200000,
+    done: function () { return equipped() >= 12; },
+    prog: function () { return [equipped(), 12]; },
+    target: firstLockedPad },
+  { txt: 'Atteins le rang Mk-VIII', reward: 3000000,
+    done: function () { return S.bestTier >= 7; },
+    prog: function () { return [S.bestTier + 1, 8]; } },
+  { txt: 'Déploie la station orbitale', reward: 9000000,
+    done: function () { return !!S.zones.orbit; },
+    target: function () { return zoneDoor('orbit'); } },
+  { txt: 'Atteins le rang ultime Mk-X', reward: 25000000,
+    done: function () { return S.bestTier >= 9; },
+    prog: function () { return [S.bestTier + 1, 10]; } },
+  { txt: 'Relance la base (prestige)', reward: 0,
+    done: function () { return S.prestigeCount >= 1; } }
+];
+
+var goalDirty = true;
+function updateGoals() {
+  if (S.goal >= GOALS.length) return;
+  var g = GOALS[S.goal];
+  if (!g.done()) return;
+  if (g.reward) {
+    S.credits += g.reward;      // une prime d'objectif n'est pas une vente
+    creditsPulse();
+  }
+  S.goal++;
+  goalDirty = true;
+  Audio_.merge();
+  flash(0.22);
+  floater(S.player.x, S.player.y, 1.9, 'Objectif atteint !', '#ffd76b', true);
+  burst(S.player.x, S.player.y, 1.0, '#ffca3a', 26, 1.3);
+  toast(g.reward ? 'Objectif atteint : +' + fmt(g.reward) + ' ◈' : 'Objectif atteint !', 'good');
+  save();
+}
+
+/* ---- Prestige : relancer la base contre un bonus permanent ---- */
+function prestigeGain() {
+  return Math.floor(Math.pow(Math.max(0, S.runEarned) / 1e6, 0.55));
+}
+function prestigeMult() { return 1 + 0.05 * S.prestige; }
+function doPrestige() {
+  var gain = prestigeGain();
+  if (gain < 1) return false;
+  S.prestige += gain;
+  S.prestigeCount++;
+  S.credits = 0; S.runEarned = 0; S.bought = 0; S.bestTier = 0; S.boost = 0;
+  S.runMined = 0; S.runSales = 0; S.runContracts = 0;
+  S.up = { speed: 0, capacity: 0, refinery: 0, drones: 0 };
+  S.lines = { mine: 0, bay: 0, orbit: 0, market: 0 };
+  S.zones = { mine: true, bay: false, dome: false, orbit: false };
+  S.zonePaid = { bay: 0, dome: 0, orbit: 0 };
+  S.transit = []; S.ores = []; S.drones = [];
+  S.refinery = { queue: [], tray: [], timer: 0, pulse: 0, spin: 0 };
+  S.contracts = []; ensureContracts();
+  S.goal = 0;
+  for (var i = 0; i < S.pads.length; i++) {
+    var p = S.pads[i];
+    p.unlocked = (i === 0); p.paid = 0; p.pop = 0;
+    p.drill = (i === 0) ? { tier: 0, timer: 0, pulse: 1, spin: 0 } : null;
+  }
+  S.player = newPlayer();
+  Audio_.unlock();
+  burst(S.player.x, S.player.y, 1.0, '#ffd76b', 40, 2);
+  flash(0.8); shakeCam(14);
+  toast('Base relancée : +' + gain + ' ◈ de commandement', 'good');
+  save();
+  return true;
 }
 
 /* Cours des cristaux : dérive lente, visible sur le marché */
@@ -1644,9 +1897,29 @@ function makeContract() {
   var top = S.bestTier;
   var tier = clamp(top - ((Math.random() * 3) | 0), 0, top);
   var qty = 12 + ((Math.random() * 26) | 0) + tier * 3;
-  var reward = Math.round(drillValue(tier) * qty * rnd(2.6, 3.6));
+  var reward = Math.round(drillValue(tier) * qty * rnd(2.6, 3.6) * prestigeMult());
   S.contractSeed++;
-  return { id: S.contractSeed, tier: tier, qty: qty, done: 0, reward: reward };
+  var c = { id: S.contractSeed, tier: tier, qty: qty, done: 0, reward: reward };
+  if (Math.random() < 0.4) {                    // commande urgente : prime doublée
+    c.limit = Math.round(qty * rnd(7, 12));     // secondes accordées
+    c.left = c.limit;
+    c.reward *= 2;
+  }
+  return c;
+}
+
+/* Décompte des commandes urgentes ; une commande expirée est remplacée */
+function updateContracts(dt) {
+  for (var i = 0; i < S.contracts.length; i++) {
+    var c = S.contracts[i];
+    if (!c.limit || c.done >= c.qty) continue;
+    c.left -= dt;
+    if (c.left <= 0) {
+      S.contracts[i] = makeContract();
+      Audio_.error();
+      toast('Commande urgente expirée ⏱', 'bad');
+    }
+  }
 }
 function ensureContracts() {
   while (S.contracts.length < 3) S.contracts.push(makeContract());
@@ -1744,6 +2017,7 @@ function updateHint() {
 }
 
 function update(dt) {
+  frameNo++;
   S.playTime += dt;
   if (S.boost > 0) S.boost = Math.max(0, S.boost - dt);
   updatePads(dt);
@@ -1752,6 +2026,8 @@ function update(dt) {
   updateRefinery(dt);
   updateLines(dt);
   updateMarket(dt);
+  updateContracts(dt);
+  updateGoals(dt);
   updateUnlock(dt);
   updateFX(dt);
   updateHint();
@@ -1893,18 +2169,19 @@ function buildDecor() {
   for (i = 0; i < 220; i++) {
     DECOR.stars.push({ x: r(), y: r(), s: r() * 1.6 + 0.4, a: r() * 0.7 + 0.25, l: (r() * 3 | 0) + 1, tw: r() * 6.28 });
   }
+  var MW = MAIN_RECT.x1, MH = MAIN_RECT.y1;
   for (i = 0; i < 16; i++) {
-    DECOR.craters.push({ x: r() * WORLD_W, y: r() * WORLD_H, r: r() * 0.5 + 0.25 });
+    DECOR.craters.push({ x: r() * MW, y: r() * MH, r: r() * 0.5 + 0.25 });
   }
   for (i = 0; i < 26; i++) {
-    var rx = r() * WORLD_W, ry = r() * WORLD_H;
+    var rx = r() * MW, ry = r() * MH;
     DECOR.rocks.push({ x: rx, y: ry, s: r() * 0.34 + 0.16, k: r() });
   }
   for (i = 0; i < 22; i++) {
-    DECOR.plants.push({ x: r() * WORLD_W, y: r() * WORLD_H, s: r() * 0.4 + 0.5, k: r(), ph: r() * 6.28 });
+    DECOR.plants.push({ x: r() * MW, y: r() * MH, s: r() * 0.4 + 0.5, k: r(), ph: r() * 6.28 });
   }
   for (i = 0; i < 30; i++) {
-    DECOR.lights.push({ x: r() * WORLD_W, y: r() * WORLD_H, ph: r() * 6.28 });
+    DECOR.lights.push({ x: r() * MW, y: r() * MH, ph: r() * 6.28 });
   }
   // on écarte le décor des zones de jeu
   function clear(list, px, py, rad) {
@@ -1928,6 +2205,7 @@ function buildDecor() {
     clear(DECOR[key], MARKET_POS.x, MARKET_POS.y, 2.2);
     clear(DECOR[key], BAY_DOOR.x, BAY_DOOR.y, 1.6);
     clear(DECOR[key], DOME_DOOR.x, DOME_DOOR.y, 1.6);
+    clear(DECOR[key], ORBIT_DOOR.x, ORBIT_DOOR.y, 1.8);
     for (var b = DECOR[key].length - 1; b >= 0; b--) {
       var it = DECOR[key][b];
       if (it.x > BAY_RECT.x0 - 0.6 && it.x < BAY_RECT.x1 + 0.6 &&
@@ -2015,17 +2293,109 @@ function isoLine(x0, y0, x1, y1, color, lw, dash) {
   ctx.restore();
 }
 
+/* Station orbitale : deuxième plateforme, reliée par une passerelle.
+   Tant que la zone est fermée, tout est dessiné en hologramme. */
+function drawStation(t) {
+  var open = S.zones.orbit;
+  var S1 = STATION_RECT;
+  var cx = (S1.x0 + S1.x1) / 2, cy = (S1.y0 + S1.y1) / 2;
+  var w = S1.x1 - S1.x0, d = S1.y1 - S1.y0;
+
+  ctx.save();
+  if (!open) ctx.globalAlpha = 0.28;
+
+  // coque
+  box(cx, cy, -0.95, w - 0.6, d - 0.6, 0.45, '#26304e', { top: '#26304e' });
+  box(cx, cy, -0.5, w, d, 0.5, '#38456b', { top: '#38456b', left: sh('#38456b', 0.52), right: sh('#38456b', 0.76) });
+  // pont
+  isoRect(S1.x0, S1.y0, S1.x1, S1.y1, open ? '#4f5f92' : '#3d4a76');
+  isoRect(S1.x0 + 0.5, S1.y0 + 0.5, S1.x1 - 0.5, S1.y1 - 0.5, open ? '#5b6ca4' : '#45537f');
+  grid(S1.x0, S1.y0, S1.x1, S1.y1, 1, '#ffffff', open ? 0.12 : 0.04);
+
+  // anneau lumineux central
+  discStroke(cx, cy, 0.02, 2.2, rgba(open ? '#48e2c6' : '#7ab8ff', 0.35), 3);
+  discStroke(cx, cy, 0.02, 1.5, rgba(open ? '#48e2c6' : '#7ab8ff', 0.18), 2);
+
+  // mâts d'angle
+  var corners = [[S1.x0 + 0.5, S1.y0 + 0.5], [S1.x1 - 0.5, S1.y0 + 0.5],
+                 [S1.x0 + 0.5, S1.y1 - 0.5], [S1.x1 - 0.5, S1.y1 - 0.5]];
+  for (var c = 0; c < corners.length; c++) {
+    cyl(corners[c][0], corners[c][1], 0, 0.13, 1.1, '#7f8db3');
+    var cs = toScreen(corners[c][0], corners[c][1], 1.15);
+    ctx.fillStyle = rgba(open ? '#48e2c6' : '#7ab8ff', 0.5 + 0.4 * Math.sin(t * 3 + c));
+    ctx.beginPath(); ctx.arc(cs.x, cs.y, 4.5 * cam.zoom, 0, 6.2832); ctx.fill();
+  }
+
+  // réacteurs sous la station
+  var es = toScreen(cx, S1.y1 - 0.8, -1.5);
+  var g = ctx.createRadialGradient(es.x, es.y, 2, es.x, es.y, 58 * cam.zoom);
+  g.addColorStop(0, rgba('#78dcff', 0.45 + 0.15 * Math.sin(t * 4)));
+  g.addColorStop(1, 'rgba(90,140,255,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.ellipse(es.x, es.y, 46 * cam.zoom, 58 * cam.zoom, 0, 0, 6.2832); ctx.fill();
+  ctx.restore();
+
+  if (!open) label(cx, cy, 2.4, 'STATION ORBITALE', { size: 11, color: '#bcd6ff', alpha: 0.85 });
+}
+
+function drawBridge(t) {
+  var open = S.zones.orbit;
+  var B = { x0: 22.3, y0: 6.9, x1: 27.2, y1: 8.3 };
+  var cx = (B.x0 + B.x1) / 2, cy = (B.y0 + B.y1) / 2;
+  ctx.save();
+  if (!open) ctx.globalAlpha = 0.25;
+  box(cx, cy, -0.28, B.x1 - B.x0, B.y1 - B.y0, 0.3, '#2e3a60', { top: open ? '#55659c' : '#3f4c79' });
+  // garde-corps
+  for (var side = 0; side < 2; side++) {
+    var yy = side ? B.y1 : B.y0;
+    for (var x = B.x0 + 0.4; x < B.x1; x += 0.8) cyl(x, yy, 0.02, 0.06, 0.42, '#8290b6');
+    var r0 = toScreen(B.x0 + 0.4, yy, 0.46), r1 = toScreen(B.x1 - 0.2, yy, 0.46);
+    ctx.strokeStyle = rgba(open ? '#7ab8ff' : '#5f79a8', 0.7); ctx.lineWidth = 2.5 * cam.zoom;
+    ctx.beginPath(); ctx.moveTo(r0.x, r0.y); ctx.lineTo(r1.x, r1.y); ctx.stroke();
+  }
+  // flux lumineux
+  if (open) {
+    for (var i = 0; i < 6; i++) {
+      var ph = ((t * 0.5 + i / 6) % 1);
+      var ls = toScreen(lerp(B.x0 + 0.3, B.x1 - 0.3, ph), cy, 0.04);
+      ctx.fillStyle = 'rgba(140,200,255,.35)';
+      ctx.beginPath(); ctx.ellipse(ls.x, ls.y, 10 * cam.zoom, 5 * cam.zoom, 0, 0, 6.2832); ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+/* Grille : un seul chemin, un seul stroke (le rendu logiciel n'aime pas les 50 appels) */
+function grid(x0, y0, x1, y1, step, color, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1 * cam.zoom;
+  ctx.beginPath();
+  var a, b;
+  for (var gx = Math.ceil(x0); gx < x1; gx += step) {
+    a = toScreen(gx, y0, 0); b = toScreen(gx, y1, 0);
+    ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+  }
+  for (var gy = Math.ceil(y0); gy < y1; gy += step) {
+    a = toScreen(x0, gy, 0); b = toScreen(x1, gy, 0);
+    ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawPlatform(t) {
-  var cx = WORLD_W / 2, cy = WORLD_H / 2;
+  var cx = MAIN_RECT.x1 / 2, cy = MAIN_RECT.y1 / 2;
 
   // coque inférieure
-  box(cx, cy, -1.15, WORLD_W - 0.5, WORLD_H - 0.5, 0.55, '#26304e',
+  box(cx, cy, -1.15, MAIN_RECT.x1 - 0.5, MAIN_RECT.y1 - 0.5, 0.55, '#26304e',
       { top: '#26304e', left: sh('#26304e', 0.6), right: sh('#26304e', 0.8) });
-  box(cx, cy, -0.62, WORLD_W, WORLD_H, 0.62, '#38456b',
+  box(cx, cy, -0.62, MAIN_RECT.x1, MAIN_RECT.y1, 0.62, '#38456b',
       { top: '#38456b', left: sh('#38456b', 0.52), right: sh('#38456b', 0.76) });
 
   // bandes d'avertissement sur la tranche
-  var s0 = toScreen(0, WORLD_H, 0), s1 = toScreen(WORLD_W, WORLD_H, 0);
+  var s0 = toScreen(0, MAIN_RECT.y1, 0), s1 = toScreen(MAIN_RECT.x1, MAIN_RECT.y1, 0);
   ctx.save();
   ctx.beginPath();
   ctx.moveTo(s0.x, s0.y); ctx.lineTo(s1.x, s1.y);
@@ -2042,7 +2412,7 @@ function drawPlatform(t) {
   ctx.restore();
 
   // pont métallique
-  isoRect(0, 0, WORLD_W, WORLD_H, '#4a5b8c');
+  isoRect(0, 0, MAIN_RECT.x1, MAIN_RECT.y1, '#4a5b8c');
 
   // zone minière (régolithe)
   isoRect(0.9, 0.5, 17.6, 7.8, '#6f6796');
@@ -2061,10 +2431,7 @@ function drawPlatform(t) {
   for (var li = 0; li < LINES.length; li++) drawBelt(LINES[li], t);
 
   // joints de panneaux
-  ctx.globalAlpha = 0.10;
-  for (var gx = 1; gx < WORLD_W; gx += 1) isoLine(gx, 0, gx, WORLD_H, '#ffffff', 1);
-  for (var gy = 1; gy < WORLD_H; gy += 1) isoLine(0, gy, WORLD_W, gy, '#ffffff', 1);
-  ctx.globalAlpha = 1;
+  grid(0, 0, MAIN_RECT.x1, MAIN_RECT.y1, 1, '#ffffff', 0.10);
 
   // cratères / impacts
   for (var c = 0; c < DECOR.craters.length; c++) {
@@ -2088,6 +2455,8 @@ function drawPlatform(t) {
   ctx.globalAlpha = 1;
 
   // structures de zone (plates : dessinées avec le sol)
+  drawStation(t);
+  drawBridge(t);
   drawBay(t);
   drawDomeFloor(t);
 
@@ -2101,7 +2470,7 @@ function drawPlatform(t) {
   for (var zi = 0; zi < ZONES.length; zi++) if (ZONES[zi].door) drawDoor(ZONES[zi], t);
 
   // réacteurs sous la plateforme
-  var eng = [[2.5, WORLD_H - 0.6], [WORLD_W - 2.5, WORLD_H - 0.6]];
+  var eng = [[2.5, MAIN_RECT.y1 - 0.6], [MAIN_RECT.x1 - 2.5, MAIN_RECT.y1 - 0.6]];
   for (var e = 0; e < eng.length; e++) {
     var sp = toScreen(eng[e][0], eng[e][1], -1.6);
     var g = ctx.createRadialGradient(sp.x, sp.y, 2, sp.x, sp.y, 62 * cam.zoom);
@@ -2259,10 +2628,7 @@ function drawBay(t) {
   // plancher
   box(cx, cy, 0, w, d, 0.18, '#5d6a9c', { top: '#6f7dae', edge: '#bcd6ff', edgeA: 0.25 });
   // grille de plancher
-  ctx.globalAlpha = 0.12;
-  for (var gx = R.x0 + 1; gx < R.x1; gx += 1) isoLine(gx, R.y0, gx, R.y1, '#ffffff', 1);
-  for (var gy = R.y0 + 1; gy < R.y1; gy += 1) isoLine(R.x0, gy, R.x1, gy, '#ffffff', 1);
-  ctx.globalAlpha = 1;
+  grid(R.x0, R.y0, R.x1, R.y1, 1, '#ffffff', 0.12);
   // murs du fond (coupe : les parois proches sont retirées)
   box(R.x0 - 0.14, cy, 0.18, 0.28, d, 1.5, '#46538a', { top: '#5b69a6', left: '#33406f', right: '#4d5b95' });
   box(cx, R.y0 - 0.14, 0.18, w, 0.28, 1.5, '#46538a', { top: '#5b69a6', left: '#33406f', right: '#4d5b95' });
@@ -2966,7 +3332,8 @@ function drawFX(t) {
     var s2 = toScreen(fl.x, fl.y, fl.z);
     var pr = fl.t / fl.life;
     ctx.globalAlpha = pr < 0.15 ? pr / 0.15 : (1 - pr) / 0.85;
-    ctx.font = '900 ' + (17 * cam.zoom) + 'px "Baloo 2", ui-rounded, Verdana, sans-serif';
+    var fsz = (fl.big ? 30 * (1 + 0.35 * Math.min(1, pr * 4)) : 17) * cam.zoom;
+    ctx.font = '900 ' + fsz + 'px "Baloo 2", ui-rounded, Verdana, sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.lineWidth = 4 * cam.zoom; ctx.strokeStyle = 'rgba(6,10,24,.85)';
     ctx.strokeText(fl.text, s2.x, s2.y);
@@ -2974,6 +3341,51 @@ function drawFX(t) {
     ctx.fillText(fl.text, s2.x, s2.y);
   }
   ctx.globalAlpha = 1;
+}
+
+/* ---------- fléchage : où aller maintenant ---------- */
+function drawGoalArrow(t) {
+  if (S.goal >= GOALS.length) return;
+  var g = GOALS[S.goal];
+  if (!g.target) return;
+  var tgt = g.target();
+  if (!tgt) return;
+  var bob = Math.sin(t * 3.4) * 7 * cam.zoom;
+  var p = toScreen(tgt.x, tgt.y, 1.2);
+  var m = 54;
+  var inside = p.x > m && p.x < W - m && p.y > m + 60 && p.y < H - m - 110;
+  var col = '#ffd76b';
+
+  ctx.save();
+  if (inside) {
+    ctx.translate(p.x, p.y - 30 * cam.zoom + bob);
+    var g2 = ctx.createRadialGradient(0, 22 * cam.zoom, 2, 0, 22 * cam.zoom, 34 * cam.zoom);
+    g2.addColorStop(0, rgba(col, 0.35)); g2.addColorStop(1, rgba(col, 0));
+    ctx.fillStyle = g2;
+    ctx.beginPath(); ctx.arc(0, 22 * cam.zoom, 34 * cam.zoom, 0, 6.2832); ctx.fill();
+  } else {
+    var cx2 = W / 2, cy2 = H / 2;
+    var dx = p.x - cx2, dy = p.y - cy2;
+    var len = Math.hypot(dx, dy) || 1;
+    var k = Math.min((W / 2 - m) / Math.abs(dx || 1), (H / 2 - m - 70) / Math.abs(dy || 1));
+    ctx.translate(cx2 + dx * k, cy2 + dy * k);
+    ctx.rotate(Math.atan2(dy, dx) - Math.PI / 2);
+  }
+  var k2 = cam.zoom * (inside ? 1 : 1.15);
+  ctx.fillStyle = col;
+  ctx.strokeStyle = 'rgba(58,36,0,.55)';
+  ctx.lineWidth = 3 * k2;
+  ctx.beginPath();
+  ctx.moveTo(0, 20 * k2);
+  ctx.lineTo(-13 * k2, -2 * k2);
+  ctx.lineTo(-5 * k2, -2 * k2);
+  ctx.lineTo(-5 * k2, -18 * k2);
+  ctx.lineTo(5 * k2, -18 * k2);
+  ctx.lineTo(5 * k2, -2 * k2);
+  ctx.lineTo(13 * k2, -2 * k2);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  ctx.restore();
 }
 
 /* ---------- assemblage de la scène ---------- */
@@ -2984,17 +3396,22 @@ var CRATES = [{ x: 2.2, y: 13.2, t: 3 }, { x: 2.9, y: 13.7, t: 5 }, { x: 1.8, y:
 function render(t) {
   ctx.clearRect(0, 0, W, H);
   drawSpace(t);
+  var shk = FX.shake;
+  if (shk > 0) {
+    ctx.save();
+    ctx.translate(rnd(-shk, shk), rnd(-shk, shk));
+  }
   drawPlatform(t);
 
   // barrière lumineuse sur le pourtour
   var i;
-  for (i = 0; i <= WORLD_W; i += 3.4) {
+  for (i = 0; i <= MAIN_RECT.x1; i += 3.4) {
     (function (x) { push(x + 0 - 0.2, function () { drawFencePost(x, 0.1, t); }); })(i);
-    (function (x) { push(x + WORLD_H + 0.2, function () { drawFencePost(x, WORLD_H - 0.1, t); }); })(i);
+    (function (x) { push(x + MAIN_RECT.y1 + 0.2, function () { drawFencePost(x, MAIN_RECT.y1 - 0.1, t); }); })(i);
   }
-  for (i = 0; i <= WORLD_H; i += 3.4) {
+  for (i = 0; i <= MAIN_RECT.y1; i += 3.4) {
     (function (y) { push(0.1 + y - 0.2, function () { drawFencePost(0.1, y, t); }); })(i);
-    (function (y) { push(WORLD_W + y + 0.2, function () { drawFencePost(WORLD_W - 0.1, y, t); }); })(i);
+    (function (y) { push(MAIN_RECT.x1 + y + 0.2, function () { drawFencePost(MAIN_RECT.x1 - 0.1, y, t); }); })(i);
   }
 
   // décor
@@ -3059,7 +3476,13 @@ function render(t) {
 
   flushQ();
   drawFX(t);
+  drawGoalArrow(t);
   flushLabels();
+  if (shk > 0) ctx.restore();
+  if (FX.flash > 0) {
+    ctx.fillStyle = 'rgba(255,255,255,' + (FX.flash * 0.5).toFixed(3) + ')';
+    ctx.fillRect(0, 0, W, H);
+  }
 
   // foreuse en cours de glissement
   if (drag.active && drag.pad && drag.pad.drill) {
@@ -3295,7 +3718,30 @@ function renderUpgrades() {
       '</div>';
   });
 
+  var gainP = prestigeGain();
+  html += '<div class="section-title">Prestige</div>';
+  html += '<div class="row">' +
+    '<div class="emoji">💠</div>' +
+    '<div class="txt"><b>Relancer la base</b>' +
+    '<small>Tout repart de zéro — socles, zones, convoyeurs, améliorations — mais chaque ' +
+    'cristal de commandement gagné ajoute <b>+5 % de revenus, définitivement</b>.</small>' +
+    '<div class="val">Bonus actuel : <span class="to">×' + prestigeMult().toFixed(2) + '</span>' +
+    ' · ' + S.prestige + ' cristal' + (S.prestige > 1 ? 'x' : '') + ' · ' + S.prestigeCount + ' relance' + (S.prestigeCount > 1 ? 's' : '') + '</div>' +
+    '<div class="val">' + (gainP >= 1
+      ? 'Cette relance rapporterait <span class="to">+' + gainP + ' ◈ de commandement</span>'
+      : 'Gagne ' + fmt(1e6) + ' ◈ sur cette partie pour débloquer (actuel : ' + fmt(S.runEarned) + ')') + '</div>' +
+    '</div>' +
+    (gainP >= 1 ? '<button class="buy max" id="btnPrestige">Relancer</button>'
+                : '<button class="buy" disabled>Verrouillé</button>') +
+    '</div>';
+
   body.innerHTML = html;
+  var bp = el('btnPrestige');
+  if (bp) bp.onclick = function () {
+    if (!confirm('Relancer la base ? Tu repars de zéro mais tu gagnes +' + prestigeGain() +
+                 ' cristaux de commandement (+' + (prestigeGain() * 5) + ' % de revenus pour toujours).')) return;
+    if (doPrestige()) { closeAll(); }
+  };
   Array.prototype.forEach.call(body.querySelectorAll('[data-line]'), function (b) {
     b.onclick = function () {
       var l = lineById(b.getAttribute('data-line'));
@@ -3336,8 +3782,11 @@ function renderContracts() {
     var frac = clamp(c.done / c.qty, 0, 1);
     html += '<div class="row">' +
       '<div class="emoji" style="background:' + rgba(TIERS[c.tier].glow, 0.18) + ';color:' + TIERS[c.tier].crystal + '">◆</div>' +
-      '<div class="txt"><b>' + c.qty + ' cristaux ' + TIERS[c.tier].name + ' ou mieux</b>' +
-      '<small>Récompense : <b style="color:#ffd76b">' + fmt(c.reward) + ' ◈</b></small>' +
+      '<div class="txt"><b>' + c.qty + ' cristaux ' + TIERS[c.tier].name + ' ou mieux' +
+      (c.limit ? '<span class="cd' + (c.left < c.limit * 0.25 ? ' urgent' : '') + '" data-cd="' + idx + '">⏱ ' + mmss(c.left) + '</span>' : '') +
+      '</b>' +
+      '<small>Récompense : <b style="color:#ffd76b">' + fmt(c.reward) + ' ◈</b>' +
+      (c.limit ? ' <span style="color:#ffd76b">· prime doublée</span>' : '') + '</small>' +
       '<div class="bar' + (ready ? ' full' : '') + '"><span style="width:' + (frac * 100) + '%"></span></div>' +
       '<div class="val">' + Math.min(c.done, c.qty) + ' / ' + c.qty + '</div></div>' +
       (ready
@@ -3353,7 +3802,8 @@ function renderContracts() {
       var i = +b.getAttribute('data-claim');
       var c = S.contracts[i];
       if (!c || c.done < c.qty) return;
-      S.credits += c.reward; S.totalEarned += c.reward;
+      S.credits += c.reward; S.totalEarned += c.reward; S.runEarned += c.reward;
+      S.contractsDone++; S.runContracts++;
       S.contracts[i] = makeContract();
       Audio_.merge(); creditsPulse();
       toast('Contrat honoré : +' + fmt(c.reward) + ' ◈', 'good');
@@ -3362,6 +3812,21 @@ function renderContracts() {
       save(); renderContracts();
     };
   });
+}
+
+var cdTimer = 0;
+function updateContractTimers(dt) {
+  if (!el('panelContracts').classList.contains('on')) return;
+  cdTimer += dt;
+  if (cdTimer < 0.5) return;
+  cdTimer = 0;
+  var nodes = document.querySelectorAll('[data-cd]');
+  for (var i = 0; i < nodes.length; i++) {
+    var c = S.contracts[+nodes[i].getAttribute('data-cd')];
+    if (!c || !c.limit) continue;
+    nodes[i].textContent = '⏱ ' + mmss(c.left);
+    nodes[i].classList.toggle('urgent', c.left < c.limit * 0.25);
+  }
 }
 
 /* ---------- menu ---------- */
@@ -3374,7 +3839,9 @@ function renderMenu() {
     '<div class="stat"><b>' + TIERS[S.bestTier].name + '</b><small>meilleur rang</small></div>' +
     '<div class="stat"><b>' + h + 'h ' + m + 'm</b><small>temps de mission</small></div>' +
     '<div class="stat"><b>' + S.pads.filter(function (p) { return p.drill; }).length + ' / ' + PAD_COUNT + '</b><small>socles équipés</small></div>' +
-    '<div class="stat"><b>' + (1 + (S.zones.bay ? 1 : 0) + (S.zones.dome ? 1 : 0)) + ' / 3</b><small>zones ouvertes</small></div>' +
+    '<div class="stat"><b>' + (1 + (S.zones.bay ? 1 : 0) + (S.zones.dome ? 1 : 0) + (S.zones.orbit ? 1 : 0)) + ' / 4</b><small>zones ouvertes</small></div>' +
+    '<div class="stat"><b>×' + prestigeMult().toFixed(2) + '</b><small>bonus de commandement</small></div>' +
+    '<div class="stat"><b>' + S.contractsDone + '</b><small>contrats honorés</small></div>' +
     '</div>' +
     '<button class="menu-btn" id="mHow">📖 Comment jouer</button>' +
     '<button class="menu-btn" id="mSound">' + (Audio_.on ? '🔊 Son : activé' : '🔇 Son : coupé') + '</button>' +
@@ -3449,6 +3916,40 @@ el('btnOfflineX2').onclick = function () {
   });
 };
 
+var goalCard = el('goalCard'), goalText = el('goalText'), goalFill = el('goalFill'),
+    goalReward = el('goalReward'), goalBar = goalFill.parentNode;
+var lastGoalProg = '';
+
+function updateGoalHUD() {
+  if (S.goal >= GOALS.length) {
+    if (goalDirty) {
+      goalDirty = false;
+      goalText.textContent = 'Base légendaire — tout est débloqué';
+      goalReward.textContent = '';
+      goalBar.classList.remove('on');
+    }
+    return;
+  }
+  var g = GOALS[S.goal];
+  var pr = g.prog ? g.prog() : null;
+  var key = S.goal + '|' + (pr ? pr[0] + '/' + pr[1] : '');
+  if (key === lastGoalProg && !goalDirty) return;
+  if (goalDirty) {
+    goalCard.classList.remove('done');
+    void goalCard.offsetWidth;
+    goalCard.classList.add('done');
+  }
+  lastGoalProg = key; goalDirty = false;
+  goalText.textContent = g.txt;
+  goalReward.textContent = g.reward ? '+' + fmt(g.reward) + ' ◈' : '';
+  if (pr) {
+    goalBar.classList.add('on');
+    goalFill.style.width = clamp(pr[0] / pr[1], 0, 1) * 100 + '%';
+  } else {
+    goalBar.classList.remove('on');
+  }
+}
+
 function updateAdsHUD() {
   // pastille de bonus actif
   if (S.boost > 0) {
@@ -3473,6 +3974,8 @@ function updateAdsHUD() {
 
 function updateHUD(dt) {
   updateAdsHUD();
+  updateGoalHUD();
+  updateContractTimers(dt);
   if (S.credits !== lastCredits) {
     lastCredits = S.credits;
     creditsVal.textContent = fmt(S.credits);
