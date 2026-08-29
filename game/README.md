@@ -108,6 +108,23 @@ npm run ios          # ouvre Xcode (nécessite un Mac)
   relancée : tout repart de zéro contre des **cristaux de commandement**, chacun valant
   **+5 % de revenus, définitivement**. Gain = (crédits de la partie / 1 M) ^ 0,55.
 
+## À bord d'ASTRA-1 : la seconde carte
+
+Le pont du vaisseau (150 K ◈) est une **carte à part entière** : on se pose sur le sas au
+pied de la fusée, on maintient la position, et la vue bascule à l'intérieur — coursive,
+hublots sur l'espace, réservoir, six socles de réacteurs et console de vente.
+
+La chaîne y est différente et **dépend de la base** :
+
+1. les **cristaux** extraits en bas doivent monter dans le **réservoir** (à dos
+   d'astronaute, ou automatiquement avec le **monte-charge**) ;
+2. chaque **réacteur** brûle un cristal et produit une **cellule d'énergie** — 150 ◈ au
+   rang R-I contre 5 ◈ pour un cristal, et ×2,25 par rang ;
+3. les cellules se revendent à la **console de bord**.
+
+Les réacteurs se fusionnent comme les foreuses (R-I → R-XIV) et s'arrêtent net quand le
+réservoir est vide : leur voyant passe au rouge et affiche « à sec ».
+
 ## Zones, logistique et marché
 
 **Trois zones** composent la base. La zone minière est ouverte dès le départ ; les deux
@@ -119,6 +136,7 @@ autres s'achètent en se posant sur leur dalle 🔒, comme les socles.
 | **Soute ASTRA-1** | 25 K ◈ | la soute de la fusée s'ouvre en coupe : 3 socles à l'abri |
 | **Serre hydroponique** | 400 K ◈ | le dôme se pressurise : 3 socles sous verre |
 | **Station orbitale** | 4,5 M ◈ | une passerelle se déploie vers une seconde plateforme : 3 socles en orbite |
+| **Pont ASTRA-1** | 150 K ◈ | l'intérieur du vaisseau : 6 réacteurs, réservoir, console de vente |
 
 Ouvrir une zone offre son premier socle, équipé d'une foreuse calée sur ton meilleur rang.
 
@@ -131,6 +149,7 @@ qui glissent dessus.
 | Mine → Raffinerie | ramasse les cristaux de la zone minière et les verse dans la trémie |
 | Soute → Raffinerie | idem depuis la soute (nécessite la zone) |
 | Station → Raffinerie | ramène les cristaux de l'orbite par la passerelle |
+| Mine → Vaisseau (monte-charge) | remplit le réservoir du bord — **il ne prend que le surplus** et laisse toujours 4 cristaux au sol, sinon la raffinerie serait affamée |
 | Raffinerie → Marché | emporte les puces et les vend toutes seules |
 
 **Le marché** remplace le terminal : chaque vente est multipliée par le **cours des
@@ -142,12 +161,16 @@ marchandises. Une commande honorée est remplacée aussitôt, calée sur ton mei
 
 ## Contenu
 
-- 19 socles d'extraction répartis en 4 zones, 10 rangs de foreuses aux palettes distinctes
-- 4 lignes d'approvisionnement, marché à cours variable, contrats urgents et prestige
+- 25 socles répartis en 5 zones et **deux cartes** (la base et l'intérieur du vaisseau)
+- 14 rangs de foreuses et 14 rangs de réacteurs, tous fusionnables
+- 5 lignes d'approvisionnement, marché à cours variable, contrats urgents et prestige
 - objectifs guidés avec fléchage dans le monde
 - Raffinerie (file d'attente, cuves, tapis roulant, plateau de sortie), terminal de crédits
 - 4 améliorations : bottes propulsées, sac dorsal, raffinerie, **drones ouvriers** (jusqu'à 4
-  assistants autonomes : les pairs minent, les impairs convoient les crédits)
+  assistants autonomes). Chaque drone a un métier choisi pour **compléter les tapis** au lieu
+  de les doubler, et **réattribué automatiquement** : le mineur sert en priorité les zones sans
+  convoyeur (la serre n'en a pas), le soutier vend les cellules à bord, et le convoyeur de puces
+  n'existe que tant que le tapis Raffinerie → Marché n'est pas acheté
 - Sauvegarde automatique (`localStorage`) + **gains hors-ligne** plafonnés à 4 h
 - Effets : particules, textes flottants, anneaux de fusion, vapeur, hologrammes, parallaxe
 - Interface FR complète : tutoriel, boutique, améliorations, statistiques, coupure du son

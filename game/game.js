@@ -14,8 +14,8 @@ var TILE_W = 88;          // largeur d'une tuile projetée
 var TILE_H = 44;          // hauteur d'une tuile projetée (iso 2:1)
 var H_UNIT = 46;          // pixels par unité de hauteur
 var SAVE_KEY = 'astro-base-tycoon-v1';
-var MAX_TIER = 9;         // index max (rang 10)
-var PAD_COUNT = 19;          // 10 mine, 3 soute, 3 serre, 3 station orbitale
+var MAX_TIER = 13;        // index max (rang 14)
+var PAD_COUNT = 25;          // 10 mine, 3 soute, 3 serre, 3 orbite, 6 réacteurs à bord
 
 var clamp = function (v, a, b) { return v < a ? a : v > b ? b : v; };
 var lerp = function (a, b, t) { return a + (b - a) * t; };
@@ -32,7 +32,7 @@ function fmt(n) {
   while (n >= 1000 && i < units.length - 1) { n /= 1000; i++; }
   return (n < 10 ? n.toFixed(2) : n < 100 ? n.toFixed(1) : Math.floor(n)) + units[i];
 }
-var ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
+var ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII', 'XIII', 'XIV'];
 
 /* Rangs de foreuses : couleurs coque + couleur du cristal produit */
 var TIERS = [
@@ -45,8 +45,16 @@ var TIERS = [
   { name: 'Mk-VII',  body: '#ff8fb0', dark: '#c4607f', crystal: '#ffa8c8', glow: '#ff5f92' },
   { name: 'Mk-VIII', body: '#5fe8d8', dark: '#28ab9d', crystal: '#8ffff0', glow: '#25e6cf' },
   { name: 'Mk-IX',   body: '#ff9d5c', dark: '#c46a29', crystal: '#ffc48a', glow: '#ff7a1f' },
-  { name: 'Mk-X',    body: '#f2f6ff', dark: '#b8c6e8', crystal: '#ffffff', glow: '#ffffff' }
+  { name: 'Mk-X',    body: '#f2f6ff', dark: '#b8c6e8', crystal: '#ffffff', glow: '#ffffff' },
+  { name: 'Mk-XI',   body: '#7cf0ff', dark: '#2fa8c4', crystal: '#c2f7ff', glow: '#31e0ff' },
+  { name: 'Mk-XII',  body: '#c8ff8a', dark: '#84c247', crystal: '#e2ffb8', glow: '#a6f24a' },
+  { name: 'Mk-XIII', body: '#ff7ae0', dark: '#c23fa2', crystal: '#ffb4ef', glow: '#ff3fd0' },
+  { name: 'Mk-XIV',  body: '#ffd45c', dark: '#c99418', crystal: '#fff3c4', glow: '#ffc400' }
 ];
+/* Noms des réacteurs du vaisseau (mêmes palettes, autre machine) */
+function reactorName(t) { return 'R-' + ROMAN[t]; }
+function cellValue(t) { return Math.round(150 * Math.pow(2.25, t)); }
+function reactorPeriod(t) { return 5.4 * Math.pow(0.93, t); }
 
 /* Équilibrage */
 function drillValue(t) { return Math.round(5 * Math.pow(2.15, t)); }      // valeur d'un cristal
@@ -55,15 +63,17 @@ function padCost(i) {                                                    // prix
   if (i < 10) return Math.round(35 * Math.pow(2.35, i - 1));             // mine à ciel ouvert
   if (i < 13) return Math.round(40000 * Math.pow(2.5, i - 10));          // soute
   if (i < 16) return Math.round(700000 * Math.pow(2.5, i - 13));         // serre
-  return Math.round(9000000 * Math.pow(2.6, i - 16));                    // station orbitale
+  if (i < 19) return Math.round(9000000 * Math.pow(2.6, i - 16));        // station orbitale
+  return Math.round(260000 * Math.pow(2.45, i - 19));                    // réacteurs du vaisseau
 }
 function shopCost(bought) { return Math.round(80 * Math.pow(1.75, bought)); }
+function reactorCost(bought) { return Math.round(260000 * Math.pow(1.8, bought)); }
 
 var UPGRADES = [
   { id: 'speed',    icon: '🥾', name: 'Bottes propulsées', desc: 'Déplacement plus rapide',        max: 6, cost: function (l) { return Math.round(220 * Math.pow(2.5, l)); } },
   { id: 'capacity', icon: '🎒', name: 'Sac dorsal',        desc: 'Capacité de transport',          max: 6, cost: function (l) { return Math.round(300 * Math.pow(2.6, l)); } },
   { id: 'refinery', icon: '🏭', name: 'Raffinerie',        desc: 'Traitement des cristaux',        max: 6, cost: function (l) { return Math.round(400 * Math.pow(2.7, l)); } },
-  { id: 'drones',   icon: '🤖', name: 'Drones ouvriers',   desc: 'Un assistant automatique de plus', max: 4, cost: function (l) { return Math.round(1500 * Math.pow(3.4, l)); } }
+  { id: 'drones',   icon: '🤖', name: 'Drones ouvriers',   desc: 'Ils couvrent ce que les tapis ne font pas : serre, puces, cellules à bord', max: 4, cost: function (l) { return Math.round(1500 * Math.pow(3.4, l)); } }
 ];
 
 function adCfg(placement) {
@@ -119,6 +129,7 @@ var S = {
   refinery: null,
   up: { speed: 0, capacity: 0, refinery: 0, drones: 0 },
   bought: 0,
+  boughtR: 0,
   totalEarned: 0,
   totalMined: 0,
   bestTier: 0,
@@ -127,9 +138,13 @@ var S = {
   started: false,
   boost: 0,              // secondes restantes de recettes doublées (pub récompensée)
   pendingOffline: 0,     // montant hors-ligne, doublable une fois par pub
-  zones: { mine: true, bay: false, dome: false, orbit: false },
-  zonePaid: { bay: 0, dome: 0, orbit: 0 },
-  lines: { mine: 0, bay: 0, orbit: 0, market: 0 },   // niveaux des lignes d'approvisionnement
+  zones: { mine: true, bay: false, dome: false, orbit: false, ship: false },
+  zonePaid: { bay: 0, dome: 0, orbit: 0, ship: 0 },
+  lines: { mine: 0, bay: 0, orbit: 0, market: 0, lift: 0 },
+  scene: 'base',         // 'base' ou 'ship'
+  cells: [],             // cellules d'énergie au sol, à bord
+  tank: 0,               // cristaux stockés dans le réservoir du vaisseau
+  runCells: 0,
   transit: [],           // colis en cours de convoyage
   contracts: [],         // commandes en cours
   contractSeed: 0,
@@ -161,7 +176,8 @@ function padPos(i) {
   }
   if (i < 13) return BAY_PADS[i - 10];
   if (i < 16) return GREENHOUSE_PADS[i - 13];
-  return ORBIT_PADS[i - 16];
+  if (i < 19) return ORBIT_PADS[i - 16];
+  return REACTOR_PADS[i - 19];                 // à bord : coordonnées du vaisseau
 }
 
 var REFINERY_POS = { x: 18.8, y: 10.6 };
@@ -177,6 +193,22 @@ var MAIN_RECT    = { x0: 0, y0: 0, x1: 23, y1: 17 };
 var BRIDGE_RECT  = { x0: 21.5, y0: 6.5, x1: 27.5, y1: 8.7 };
 var STATION_RECT = { x0: 26.6, y0: 3.2, x1: 32.4, y1: 11.4 };
 var ORBIT_DOOR   = { x: 21.6, y: 7.6 };
+var SHIP_DOOR    = { x: 3.2, y: 12.6 };        // sas au pied de la fusée, sur la base
+
+/* Intérieur du vaisseau : une seconde carte, avec ses propres coordonnées */
+var SHIP = {
+  rect:    { x0: 0.8, y0: 0.8, x1: 13.2, y1: 10.2 },
+  spawn:   { x: 5.0, y: 8.6 },
+  airlock: { x: 2.2, y: 9.4 },                 // retour vers la base
+  tank:    { x: 3.0, y: 2.6 },                 // réservoir à cristaux
+  console: { x: 11.4, y: 8.8 }                 // vente des cellules
+};
+var REACTOR_PADS = [
+  { x: 6.4, y: 2.4 }, { x: 9.2, y: 2.4 }, { x: 12.0, y: 2.4 },
+  { x: 6.4, y: 5.6 }, { x: 9.2, y: 5.6 }, { x: 12.0, y: 5.6 }
+];
+var TANK_MAX = 240;
+var LIFT_KEEP = 4;              // cristaux laissés au sol par le monte-charge
 var BAY_DOOR     = { x: 10.5, y: 11.9 };       // rampe d'accès : on se pose dessus pour acheter
 var DOME_DOOR    = { x: 20.2, y: 6.5 };
 
@@ -188,8 +220,12 @@ var ZONES = [
   { id: 'dome', name: 'Serre hydroponique', cost: 400000, pads: [13,14,15], door: DOME_DOOR,
     desc: 'Le dôme se pressurise : trois socles de plus sous verre.' },
   { id: 'orbit', name: 'Station orbitale', cost: 4500000, pads: [16,17,18], door: ORBIT_DOOR,
-    desc: 'Déploie la passerelle vers la station : trois socles en orbite.' }
+    desc: 'Déploie la passerelle vers la station : trois socles en orbite.' },
+  { id: 'ship', name: 'Pont ASTRA-1', cost: 150000, pads: [19,20,21,22,23,24], door: SHIP_DOOR,
+    desc: 'Ouvre le sas : six réacteurs à bord, alimentés par tes cristaux.' }
 ];
+/* Scène d'un socle : les réacteurs vivent dans le vaisseau */
+function padScene(i) { return i >= 19 ? 'ship' : 'base'; }
 
 /* Lignes d'approvisionnement : tracés suivis par les colis */
 var LINES = [
@@ -203,6 +239,9 @@ var LINES = [
     base: 120000, icon: '🛰️',
     path: [{ x: 28.0, y: 9.8 }, { x: 24.6, y: 9.8 }, { x: 24.6, y: 7.6 }, { x: 22.4, y: 7.6 },
            { x: 22.4, y: 12.3 }, { x: 20.1, y: 12.3 }] },
+  { id: 'lift', name: 'Monte-charge Mine → Vaisseau', zone: 'ship', carries: 'lift',
+    base: 45000, icon: '🛗',
+    path: [{ x: 10.2, y: 9.0 }, { x: 4.4, y: 9.0 }, { x: 4.4, y: 12.4 }, { x: 3.6, y: 12.6 }] },
   { id: 'market', name: 'Convoyeur Raffinerie → Marché', zone: 'mine', carries: 'chip',
     base: 9000, icon: '💠',
     path: [{ x: 17.4, y: 12.9 }, { x: 17.4, y: 15.6 }, { x: 12.6, y: 15.6 }, { x: 12.2, y: 14.9 }] }
@@ -247,7 +286,7 @@ function newPlayer() {
 }
 function newDrone(i) {
   return {
-    x: 6 + i * 0.8, y: 9.4, vx: 0, vy: 0, face: 1, fly: true, bob: Math.random() * 6,
+    x: 6 + i * 0.8, y: 9.4, vx: 0, vy: 0, face: 1, fly: true, scene: 'base', bob: Math.random() * 6,
     carry: [], carryType: null, actTimer: 0, task: null, target: null
   };
 }
@@ -257,7 +296,7 @@ function initWorld() {
   for (var i = 0; i < PAD_COUNT; i++) {
     var p = padPos(i);
     S.pads.push({
-      i: i, x: p.x, y: p.y, zone: zoneOf(i).id,
+      i: i, x: p.x, y: p.y, zone: zoneOf(i).id, scene: padScene(i), kind: i >= 19 ? 'reactor' : 'drill',
       unlocked: i === 0,
       cost: i === 0 ? 0 : padCost(i),
       paid: 0,
@@ -265,9 +304,10 @@ function initWorld() {
       pop: 0
     });
   }
-  S.zones = { mine: true, bay: false, dome: false, orbit: false };
-  S.zonePaid = { bay: 0, dome: 0, orbit: 0 };
-  S.lines = { mine: 0, bay: 0, orbit: 0, market: 0 };
+  S.zones = { mine: true, bay: false, dome: false, orbit: false, ship: false };
+  S.zonePaid = { bay: 0, dome: 0, orbit: 0, ship: 0 };
+  S.lines = { mine: 0, bay: 0, orbit: 0, market: 0, lift: 0 };
+  S.scene = 'base'; S.cells = []; S.tank = 0; S.runCells = 0;
   S.transit = [];
   S.contracts = [];
   S.contractSeed = 0;
@@ -290,6 +330,7 @@ function save() {
       credits: S.credits,
       up: S.up,
       bought: S.bought,
+      boughtR: S.boughtR,
       totalEarned: S.totalEarned,
       totalMined: S.totalMined,
       bestTier: S.bestTier,
@@ -298,6 +339,9 @@ function save() {
       zones: S.zones,
       zonePaid: S.zonePaid,
       lines: S.lines,
+      scene: S.scene,
+      tank: S.tank,
+      runCells: S.runCells,
       contracts: S.contracts,
       contractSeed: S.contractSeed,
       contractsDone: S.contractsDone,
@@ -328,6 +372,7 @@ function load() {
     S.up = { speed: 0, capacity: 0, refinery: 0, drones: 0 };
     if (d.up) for (var k in S.up) if (typeof d.up[k] === 'number') S.up[k] = d.up[k];
     S.bought = d.bought || 0;
+    S.boughtR = d.boughtR || 0;
     S.totalEarned = d.totalEarned || 0;
     S.totalMined = d.totalMined || 0;
     S.bestTier = d.bestTier || 0;
@@ -336,6 +381,9 @@ function load() {
     if (d.zones) for (var z in S.zones) if (d.zones[z]) S.zones[z] = true;
     if (d.zonePaid) S.zonePaid = d.zonePaid;
     if (d.lines) for (var l in S.lines) if (typeof d.lines[l] === 'number') S.lines[l] = d.lines[l];
+    S.scene = d.scene === 'ship' ? 'ship' : 'base';
+    S.tank = d.tank || 0;
+    S.runCells = d.runCells || 0;
     if (d.contracts) S.contracts = d.contracts;
     S.contractSeed = d.contractSeed || 0;
     S.contractsDone = d.contractsDone || 0;
@@ -364,11 +412,23 @@ function offlineGains() {
   var dt = (Date.now() - S.lastSeen) / 1000;
   if (dt < 120) return 0;
   dt = Math.min(dt, 4 * 3600);          // 4 h max
-  var perSec = 0;
+  var perSec = 0, cellsPerSec = 0, cellValueSum = 0;
   S.pads.forEach(function (p) {
-    if (p.drill) perSec += drillValue(p.drill.tier) / drillPeriod(p.drill.tier);
+    if (!p.drill) return;
+    if (p.kind === 'reactor') {
+      cellsPerSec += 1 / reactorPeriod(p.drill.tier);
+      cellValueSum += cellValue(p.drill.tier) / reactorPeriod(p.drill.tier);
+    } else {
+      perSec += drillValue(p.drill.tier) / drillPeriod(p.drill.tier);
+    }
   });
-  return Math.floor(perSec * dt * 0.35); // rendement réduit sans astronaute
+  var gain = perSec * dt * 0.35;
+  if (cellsPerSec > 0 && S.tank > 0) {          // les réacteurs brûlent le carburant stocké
+    var burned = Math.min(S.tank, cellsPerSec * dt * 0.35);
+    gain += (cellValueSum / cellsPerSec) * burned;
+    S.tank = Math.max(0, Math.round(S.tank - burned));
+  }
+  return Math.floor(gain);
 }
 
 /* ------------------------------------------------------------------ */
@@ -456,7 +516,7 @@ function padAtScreen(sx, sy) {
   var best = null, bestD = 1e9;
   for (var i = 0; i < S.pads.length; i++) {
     var p = S.pads[i];
-    if (!p.drill) continue;
+    if (!p.drill || p.scene !== S.scene) continue;
     var s = toScreen(p.x, p.y, 0.55);
     var dx = sx - s.x, dy = sy - s.y;
     var d = dx * dx + dy * dy;
@@ -468,6 +528,7 @@ function padSocketAtScreen(sx, sy) {
   var best = null, bestD = 1e9;
   for (var i = 0; i < S.pads.length; i++) {
     var p = S.pads[i];
+    if (p.scene !== S.scene) continue;
     var s = toScreen(p.x, p.y, 0);
     var d = dist2(sx, sy, s.x, s.y);
     if (d < (58 * cam.zoom) * (58 * cam.zoom) && d < bestD) { bestD = d; best = p; }
@@ -570,6 +631,7 @@ function inRect(r, x, y, m) {
   return x >= r.x0 - m && x <= r.x1 + m && y >= r.y0 - m && y <= r.y1 + m;
 }
 function walkable(x, y) {
+  if (S.scene === 'ship') return inRect(SHIP.rect, x, y, -0.45);
   if (inRect(MAIN_RECT, x, y, -0.7)) return true;
   if (!S.zones.orbit) return false;
   return inRect(BRIDGE_RECT, x, y, -0.3) || inRect(STATION_RECT, x, y, -0.4);
@@ -580,13 +642,20 @@ var COLL = [], collFrame = -1, frameNo = 0;
 function colliders() {
   if (collFrame === frameNo) return COLL;      // une seule construction par image
   collFrame = frameNo;
+  if (S.scene === 'ship') {
+    var sc = [{ x: SHIP.tank.x, y: SHIP.tank.y, r: 1.05 },
+              { x: SHIP.console.x, y: SHIP.console.y, r: 0.9 }];
+    for (var k = 19; k < S.pads.length; k++) if (S.pads[k].drill) sc.push({ x: S.pads[k].x, y: S.pads[k].y, r: 0.72 });
+    COLL = sc;
+    return COLL;
+  }
   var c = [
     { x: REFINERY_POS.x, y: REFINERY_POS.y, r: 1.55 },
     { x: MARKET_POS.x, y: MARKET_POS.y, r: 1.05 },
     { x: ROCKET_POS.x, y: ROCKET_POS.y, r: 1.05 }
   ];
   if (!S.zones.dome) c.push({ x: DOME_POS.x, y: DOME_POS.y, r: 2.5 });
-  for (var i = 0; i < S.pads.length; i++) {
+  for (var i = 0; i < 19; i++) {
     var p = S.pads[i];
     if (p.drill) c.push({ x: p.x, y: p.y, r: 0.72 });
   }
@@ -635,6 +704,50 @@ function updateCarrier(a, dt, cfg) {
   a.actTimer -= dt;
   var cap = cfg.cap, R = 1.25 * 1.25;
   var canTake = cfg.mode !== 'deliver';        // en livraison : dépôt uniquement
+  var sc = cfg.scene || 'base';
+
+  /* ===== à bord du vaisseau ===== */
+  if (sc === 'ship') {
+    /* A. ramasser les cellules d'énergie */
+    if (canTake && (!a.carryType || a.carryType === 'cell') && a.carry.length < cap) {
+      var bc = -1, bcd = R;
+      for (var ci = 0; ci < S.cells.length; ci++) {
+        var cl = S.cells[ci];
+        var cd = dist2(a.x, a.y, cl.x, cl.y);
+        if (cd < bcd) { bcd = cd; bc = ci; }
+      }
+      if (bc >= 0 && a.actTimer <= 0) {
+        var cell = S.cells.splice(bc, 1)[0];
+        a.carry.push({ value: cell.value, tier: cell.tier }); a.carryType = 'cell';
+        a.actTimer = cfg.rate;
+        S.runCells++;
+        if (cfg.sound) Audio_.pickup(a.carry.length);
+        burst(cell.x, cell.y, 0.35, TIERS[cell.tier].glow, 4, 0.5);
+        return;
+      }
+    }
+    /* B. verser les cristaux dans le réservoir */
+    if (a.carryType === 'ore' && a.carry.length && S.tank < TANK_MAX &&
+        dist2(a.x, a.y, SHIP.tank.x, SHIP.tank.y) < 1.7 * 1.7 && a.actTimer <= 0) {
+      a.carry.pop();
+      S.tank++;
+      a.actTimer = cfg.rate;
+      if (!a.carry.length) a.carryType = null;
+      if (cfg.sound) Audio_.drop(a.carry.length);
+      return;
+    }
+    /* C. vendre les cellules à la console de bord */
+    if (a.carryType === 'cell' && a.carry.length &&
+        dist2(a.x, a.y, SHIP.console.x, SHIP.console.y) < 1.6 * 1.6 && a.actTimer <= 0) {
+      var cc = a.carry.pop();
+      sell(cc, SHIP.console.x, SHIP.console.y);
+      a.actTimer = cfg.rate * 0.8;
+      if (!a.carry.length) a.carryType = null;
+      if (cfg.sound) Audio_.cash();
+      return;
+    }
+    return;                                    // les postes de la base ne comptent pas ici
+  }
 
   /* 1. ramasser les cristaux au sol */
   if (canTake && (!a.carryType || a.carryType === 'ore') && a.carry.length < cap) {
@@ -691,6 +804,53 @@ function updateCarrier(a, dt, cfg) {
   }
 }
 
+/* ---- Passage d'une carte à l'autre (base <-> intérieur du vaisseau) ---- */
+var trans = { active: false, t: 0, to: null };
+var doorArm = { id: null, t: 0 };
+var DOOR_HOLD = 0.55;
+
+function goScene(name) {
+  if (trans.active || S.scene === name) return;
+  trans.active = true; trans.t = 0; trans.to = name;
+  Audio_.blip(320, 0.25, 'sine', 0.09);
+}
+function updateTransition(dt) {
+  if (!trans.active) return;
+  trans.t += dt;
+  if (trans.t >= 0.28 && S.scene !== trans.to) {
+    S.scene = trans.to;
+    var sp = (S.scene === 'ship') ? SHIP.spawn : { x: SHIP_DOOR.x, y: SHIP_DOOR.y + 1.4 };
+    S.player.x = sp.x; S.player.y = sp.y;
+    S.player.ox = sp.x; S.player.oy = sp.y;
+    cam.x = sp.x; cam.y = sp.y;
+    arm.id = null; doorArm.id = null; doorArm.t = 0;
+    doorArm.locked = true;        // il faut quitter la dalle avant de repasser
+    Audio_.blip(520, 0.2, 'triangle', 0.08);
+    save();
+  }
+  if (trans.t >= 0.58) { trans.active = false; trans.to = null; }
+}
+function doorProgress(id) { return doorArm.id === id ? clamp(doorArm.t / DOOR_HOLD, 0, 1) : 0; }
+
+/* Sas : on maintient la position pour embarquer ou débarquer */
+function updateSceneDoors(dt) {
+  if (trans.active) return;
+  var p = S.player, id = null, msg = '', act = null;
+  if (S.scene === 'base') {
+    if (S.zones.ship && dist2(p.x, p.y, SHIP_DOOR.x, SHIP_DOOR.y) < 1.0) {
+      id = 'door:ship'; msg = 'Maintiens pour embarquer 🚀'; act = function () { goScene('ship'); };
+    }
+  } else if (dist2(p.x, p.y, SHIP.airlock.x, SHIP.airlock.y) < 1.0) {
+    id = 'door:base'; msg = 'Maintiens pour sortir sur la base'; act = function () { goScene('base'); };
+  }
+  if (!id) { doorArm.id = null; doorArm.t = 0; doorArm.locked = false; return; }
+  if (doorArm.locked) return;                  // on vient d'arriver : on attend de s'écarter
+  if (doorArm.id !== id) { doorArm.id = id; doorArm.t = 0; }
+  doorArm.t += dt;
+  hint(msg, 0.5);
+  if (doorArm.t >= DOOR_HOLD) { doorArm.id = null; doorArm.t = 0; act(); }
+}
+
 /* Achat progressif : il faut d'abord MAINTENIR la position, puis rester payer.
    Sans ce délai d'amorçage, un simple passage sur une dalle vidait le compte. */
 var ARM_TIME = 0.8;
@@ -706,6 +866,7 @@ function updateUnlock(dt) {
   /* 1. sur quelle dalle achetable se trouve-t-on ? */
   for (i = 0; i < ZONES.length; i++) {
     var z = ZONES[i];
+    if (S.scene !== 'base') break;              // les dalles de zone sont sur la base
     if (!z.door || S.zones[z.id]) continue;
     if (dist2(S.player.x, S.player.y, z.door.x, z.door.y) < 1.05 * 1.05) {
       target = { id: 'zone:' + z.id, kind: 'zone', zone: z,
@@ -716,7 +877,7 @@ function updateUnlock(dt) {
   if (!target) {
     for (i = 0; i < S.pads.length; i++) {
       var p = S.pads[i];
-      if (p.unlocked || !S.zones[p.zone]) continue;
+      if (p.scene !== S.scene || p.unlocked || !S.zones[p.zone]) continue;
       if (dist2(S.player.x, S.player.y, p.x, p.y) < 0.95 * 0.95) {
         target = { id: 'pad:' + i, kind: 'pad', pad: p, x: p.x, y: p.y, cost: p.cost, paid: p.paid };
         break;
@@ -752,7 +913,8 @@ function updateUnlock(dt) {
     S.zonePaid[zz.id] = zz.cost;
     var first = S.pads[zz.pads[0]];
     first.unlocked = true; first.paid = first.cost; first.pop = 1;
-    first.drill = { tier: clamp(S.bestTier - 2, 0, MAX_TIER), timer: 0, pulse: 1, spin: 0 };
+    first.drill = { tier: zz.id === 'ship' ? 0 : clamp(S.bestTier - 2, 0, MAX_TIER),
+                    timer: 0, pulse: 1, spin: 0 };
     arm.id = null;
     Audio_.unlock();
     burst(zz.door.x, zz.door.y, 0.5, '#ffca3a', 34, 1.7);
@@ -785,6 +947,11 @@ function oresOfPad(i) {
   for (var k = 0; k < S.ores.length; k++) if (S.ores[k].pad === i) n++;
   return n;
 }
+function cellsOfPad(i) {
+  var n = 0;
+  for (var k = 0; k < S.cells.length; k++) if (S.cells[k].pad === i) n++;
+  return n;
+}
 
 function updatePads(dt) {
   for (var i = 0; i < S.pads.length; i++) {
@@ -794,7 +961,27 @@ function updatePads(dt) {
     var d = p.drill;
     d.spin += dt * (2.4 + d.tier * 0.35);
     if (d.pulse > 0) d.pulse = Math.max(0, d.pulse - dt * 2.4);
-    if (oresOfPad(i) >= ORE_PER_PAD) continue;
+
+    if (p.kind === 'reactor') {                       // à bord : consomme du carburant
+      if (cellsOfPad(i) >= 6) continue;
+      if (S.tank <= 0) { d.dry = true; continue; }
+      d.dry = false;
+      d.timer += dt;
+      var rp = reactorPeriod(d.tier);
+      while (d.timer >= rp && S.tank > 0 && cellsOfPad(i) < 6) {
+        d.timer -= rp;
+        S.tank--;
+        d.pulse = 1;
+        S.cells.push({
+          x: p.x + rnd(-0.4, 0.4), y: p.y + 1.15 + rnd(-0.2, 0.4), pad: i,
+          tier: d.tier, value: cellValue(d.tier), bob: Math.random() * 6.28, t: 0, spawn: 0
+        });
+        burst(p.x, p.y + 0.6, 0.25, TIERS[d.tier].glow, 5, 0.6);
+      }
+      continue;
+    }
+
+    if (oresOfPad(i) >= ORE_PER_PAD) continue;        // sur la base : extraction
     d.timer += dt;
     var period = drillPeriod(d.tier);
     while (d.timer >= period && oresOfPad(i) < ORE_PER_PAD) {
@@ -809,7 +996,9 @@ function updatePads(dt) {
       burst(p.x, p.y + 0.6, 0.25, TIERS[d.tier].glow, 5, 0.6);
     }
   }
-  for (var k = 0; k < S.ores.length; k++) { S.ores[k].t += dt; if (S.ores[k].spawn < 1) S.ores[k].spawn = Math.min(1, S.ores[k].spawn + dt * 3.5); }
+  var k;
+  for (k = 0; k < S.ores.length; k++) { S.ores[k].t += dt; if (S.ores[k].spawn < 1) S.ores[k].spawn = Math.min(1, S.ores[k].spawn + dt * 3.5); }
+  for (k = 0; k < S.cells.length; k++) { S.cells[k].t += dt; if (S.cells[k].spawn < 1) S.cells[k].spawn = Math.min(1, S.cells[k].spawn + dt * 3.5); }
 }
 
 function updateRefinery(dt) {
@@ -840,7 +1029,19 @@ function updateLines(dt) {
     var period = 1 / lineRate(l.id);
     while (l.timer >= period) {
       l.timer -= period;
-      if (l.carries === 'ore') {
+      if (l.carries === 'lift') {
+        if (S.tank >= TANK_MAX) break;
+        if (S.ores.length <= LIFT_KEEP) break;   // il laisse toujours de quoi alimenter la raffinerie
+        var bl = -1, bld = 1e9;
+        for (var m = 0; m < S.ores.length; m++) {
+          var oo = S.ores[m], dd2 = dist2(oo.x, oo.y, l.path[0].x, l.path[0].y);
+          if (dd2 < bld) { bld = dd2; bl = m; }
+        }
+        if (bl < 0) break;
+        var lore = S.ores.splice(bl, 1)[0];
+        S.transit.push({ line: l.id, t: 0, kind: 'ore', value: lore.value, tier: lore.tier });
+        burst(lore.x, lore.y, 0.3, TIERS[lore.tier].glow, 3, 0.4);
+      } else if (l.carries === 'ore') {
         if (S.refinery.queue.length >= QUEUE_MAX) break;
         var best = -1, bd = 1e9;
         for (var k = 0; k < S.ores.length; k++) {
@@ -869,7 +1070,9 @@ function updateLines(dt) {
     it.t += dt * 2.4 / Math.max(1, lineLength(l));
     if (it.t < 1) continue;
     S.transit.splice(i, 1);
-    if (it.kind === 'ore') {
+    if (it.line === 'lift') {
+      S.tank = Math.min(TANK_MAX, S.tank + 1);
+    } else if (it.kind === 'ore') {
       S.refinery.queue.push({ value: it.value, tier: it.tier });
       S.refinery.pulse = 1;
     } else {
@@ -962,6 +1165,16 @@ var GOALS = [
     done: function () { return anyLine() >= 1; } },
   { txt: 'Honore un contrat de livraison', reward: 90000,
     done: function () { return S.runContracts >= 1; } },
+  { txt: 'Ouvre le pont du vaisseau', reward: 150000,
+    done: function () { return !!S.zones.ship; },
+    target: function () { return zoneDoor('ship'); } },
+  { txt: 'Monte 10 cristaux dans le réservoir', reward: 200000, scene: 'ship',
+    done: function () { return S.tank >= 10; },
+    prog: function () { return [Math.min(S.tank, 10), 10]; },
+    target: function () { return SHIP.tank; } },
+  { txt: 'Vends ta première cellule d\'énergie', reward: 300000, scene: 'ship',
+    done: function () { return S.runCells >= 1; },
+    target: function () { return S.cells.length ? S.cells[0] : SHIP.console; } },
   { txt: 'Atteins le rang Mk-VI', reward: 200000,
     done: function () { return S.bestTier >= 5; },
     prog: function () { return [S.bestTier + 1, 6]; } },
@@ -978,11 +1191,16 @@ var GOALS = [
   { txt: 'Déploie la station orbitale', reward: 9000000,
     done: function () { return !!S.zones.orbit; },
     target: function () { return zoneDoor('orbit'); } },
-  { txt: 'Atteins le rang ultime Mk-X', reward: 25000000,
+  { txt: 'Atteins le rang Mk-X', reward: 25000000,
     done: function () { return S.bestTier >= 9; },
-    prog: function () { return [S.bestTier + 1, 10]; } },
+    prog: function () { return [Math.min(S.bestTier + 1, 10), 10]; } },
+  { txt: 'Installe un réacteur R-IV à bord', reward: 60000000, scene: 'ship',
+    done: function () { return S.pads.some(function (p) { return p.scene === 'ship' && p.drill && p.drill.tier >= 3; }); } },
   { txt: 'Relance la base (prestige)', reward: 0,
-    done: function () { return S.prestigeCount >= 1; } }
+    done: function () { return S.prestigeCount >= 1; } },
+  { txt: 'Atteins le rang légendaire Mk-XIV', reward: 250000000,
+    done: function () { return S.bestTier >= 13; },
+    prog: function () { return [Math.min(S.bestTier + 1, 14), 14]; } }
 ];
 
 var goalDirty = true;
@@ -1093,8 +1311,33 @@ function claimableContracts() {
   return n;
 }
 
-/* IA des drones : les pairs minent, les impairs convoient les crédits.
-   Machine à états : un drone ne repart chercher qu'une fois sa soute VIDE. */
+/* IA des drones. Chacun a un métier, choisi pour compléter les convoyeurs
+   plutôt que les doubler :
+     - mineur   : ramasse en priorité dans les zones SANS tapis (la serre n'en a pas)
+     - convoyeur: puces de la raffinerie vers le marché
+     - soutier  : à bord, ramasse les cellules et les vend à la console
+   Un drone ne repart chercher qu'une fois sa soute vide. */
+function droneJobs() {
+  var jobs = ['ore'];                            // toujours utile : zones sans tapis et surplus
+  if (S.zones.ship) jobs.push('cell');           // personne d'autre ne vend les cellules à bord
+  if (!S.lines.market) jobs.push('chip');        // inutile dès que le tapis vend tout seul
+  if (jobs.length === 1) jobs.push('ore');
+  return jobs;
+}
+function droneRole(i) {
+  var jobs = droneJobs();
+  return jobs[i % jobs.length];
+}
+function roleLabel(r) {
+  return r === 'ore' ? 'mineur' : r === 'chip' ? 'convoyeur de puces' : 'soutier du vaisseau';
+}
+function zoneHasBelt(zone) {
+  if (zone === 'mine') return S.lines.mine > 0 || S.lines.lift > 0;
+  if (zone === 'bay') return S.lines.bay > 0;
+  if (zone === 'orbit') return S.lines.orbit > 0;
+  return false;                                  // la serre n'a pas de tapis : terrain des drones
+}
+
 function updateDrones(dt) {
   var want = droneCount();
   while (S.drones.length < want) S.drones.push(newDrone(S.drones.length));
@@ -1102,44 +1345,63 @@ function updateDrones(dt) {
 
   for (var i = 0; i < S.drones.length; i++) {
     var d = S.drones[i];
-    var isMiner = (i % 2 === 0);
+    var role = droneRole(i);
     var cap = 5 + S.up.capacity;
     if (!d.mode) d.mode = 'gather';
 
+    // changement de métier : on replace le drone dans la bonne carte
+    var wantScene = role === 'cell' ? 'ship' : 'base';
+    if (d.scene !== wantScene) {
+      d.scene = wantScene;
+      d.carry = []; d.carryType = null; d.mode = 'gather';
+      if (wantScene === 'ship') { d.x = SHIP.spawn.x + 1.2; d.y = SHIP.spawn.y; }
+      else { d.x = REFINERY_IN.x - 2; d.y = REFINERY_IN.y - 1; }
+    }
+    d.role = role;
+
+    /* --- source du métier --- */
+    var source = null, drop = null;
+    if (role === 'ore') {
+      var best = null, bd = 1e9, bestFree = null, bfd = 1e9;
+      for (var k = 0; k < S.ores.length; k++) {
+        var o = S.ores[k], dd = dist2(d.x, d.y, o.x, o.y);
+        if (dd < bd) { bd = dd; best = o; }
+        if (!zoneHasBelt(S.pads[o.pad].zone) && dd < bfd) { bfd = dd; bestFree = o; }
+      }
+      source = bestFree || best;                 // priorité aux zones sans tapis
+      drop = REFINERY_IN;
+    } else if (role === 'chip') {
+      source = S.refinery.tray.length ? REFINERY_OUT : null;
+      drop = MARKET_POS;
+    } else {
+      var bc = null, bcd = 1e9;
+      for (var c = 0; c < S.cells.length; c++) {
+        var cl = S.cells[c], cd = dist2(d.x, d.y, cl.x, cl.y);
+        if (cd < bcd) { bcd = cd; bc = cl; }
+      }
+      source = bc;
+      drop = SHIP.console;
+    }
+
     /* --- transitions --- */
     if (d.mode === 'gather') {
-      var noSource = isMiner ? !S.ores.length : !S.refinery.tray.length;
-      // plein, ou plus rien à charger : on part livrer
-      if (d.carry.length >= cap || (d.carry.length && noSource)) d.mode = 'deliver';
+      if (d.carry.length >= cap || (d.carry.length && !source)) d.mode = 'deliver';
     } else if (!d.carry.length) {
-      d.mode = 'gather';                      // soute vide : on peut repartir
+      d.mode = 'gather';
     }
 
     /* --- destination --- */
     var tx, ty;
-    if (d.mode === 'deliver') {
-      if (isMiner) { tx = REFINERY_IN.x; ty = REFINERY_IN.y; }
-      else { tx = MARKET_POS.x; ty = MARKET_POS.y - 0.1; }
-    } else if (isMiner) {
-      var best = null, bd = 1e9;
-      for (var k = 0; k < S.ores.length; k++) {
-        var o = S.ores[k], dd = dist2(d.x, d.y, o.x, o.y);
-        if (dd < bd) { bd = dd; best = o; }
-      }
-      if (best) { tx = best.x; ty = best.y; }
-      else { tx = REFINERY_IN.x - 1.6; ty = REFINERY_IN.y - 0.6; }   // attente
-    } else {
-      if (S.refinery.tray.length) { tx = REFINERY_OUT.x; ty = REFINERY_OUT.y; }
-      else { tx = MARKET_POS.x + 1.6; ty = MARKET_POS.y - 0.5; }     // attente
-    }
+    if (d.mode === 'deliver') { tx = drop.x; ty = drop.y; }
+    else if (source) { tx = source.x; ty = source.y; }
+    else { tx = drop.x + 1.6; ty = drop.y - 0.8; }   // attente près du poste
 
     var dx = tx - d.x, dy = ty - d.y;
     var len = Math.hypot(dx, dy);
     if (len > 0.35) moveActor(d, dx, dy, droneSpeed(), dt);
     else d.moving = false;
     d.bob += dt * 3;
-    // en livraison le drone ne ramasse rien : il vide sa soute d'abord
-    updateCarrier(d, dt, { cap: cap, rate: 0.11, sound: false, mode: d.mode });
+    updateCarrier(d, dt, { cap: cap, rate: 0.11, sound: false, mode: d.mode, scene: d.scene || 'base' });
   }
 }
 
@@ -1153,11 +1415,19 @@ function updatePlayer(dt) {
   }
   moveActor(S.player, dx, dy, playerSpeed(), dt);
   S.player.bob += dt * (S.player.moving ? 9 : 2.4);
-  updateCarrier(S.player, dt, { cap: playerCap(), rate: 0.07, sound: true });
+  updateCarrier(S.player, dt, { cap: playerCap(), rate: 0.07, sound: true, scene: S.scene });
 }
 
 function updateHint() {
   var p = S.player, msg = '';
+  if (S.scene === 'ship') {                    // astuces propres au vaisseau
+    if (p.carryType === 'ore' && p.carry.length) msg = 'Verse tes cristaux dans le réservoir';
+    else if (p.carryType === 'cell' && p.carry.length) msg = 'Vends tes cellules à la console ⚛';
+    else if (!S.tank) msg = 'Réservoir vide — remonte des cristaux de la base';
+    else if (S.cells.length) msg = 'Des cellules t\'attendent au sol';
+    if (msg) hint(msg, 0.6);
+    return;
+  }
   for (var zi = 1; zi < ZONES.length; zi++) {
     var z = ZONES[zi];
     if (!S.zones[z.id] && S.credits >= z.cost) {
@@ -1183,6 +1453,8 @@ function update(dt) {
   updateRefinery(dt);
   updateLines(dt);
   updateMarket(dt);
+  updateSceneDoors(dt);
+  updateTransition(dt);
   updateContracts(dt);
   updateGoals(dt);
   updateUnlock(dt);
@@ -2318,6 +2590,13 @@ function drawCarryStack(a, topY, sx) {
     var y = topY - i * step;
     var wob = Math.sin(a.bob * 0.9 + i * 0.5) * (0.6 + i * 0.12) * cam.zoom;
     if (a.carryType === 'chip') drawChip(sx + wob, y, 10 * cam.zoom);
+    else if (a.carryType === 'cell') {
+      var Tc = TIERS[a.carry[i].tier], kc = 7 * cam.zoom;
+      ctx.fillStyle = '#cfd9ef';
+      roundRect(sx + wob - kc * 0.7, y - kc * 1.1, kc * 1.4, kc * 2.2, kc * 0.5); ctx.fill();
+      ctx.fillStyle = rgba(Tc.crystal, 0.95);
+      roundRect(sx + wob - kc * 0.45, y - kc * 0.85, kc * 0.9, kc * 1.7, kc * 0.36); ctx.fill();
+    }
     else drawCrystalShape(sx + wob, y + 6 * cam.zoom, 8 * cam.zoom, TIERS[a.carry[i].tier], 1, i === shown - 1);
   }
   if (n > shown) {
@@ -2500,11 +2779,253 @@ function drawFX(t) {
   ctx.globalAlpha = 1;
 }
 
+/* ================= INTÉRIEUR DU VAISSEAU ================= */
+function drawShipBackground(t) {
+  var g = ctx.createLinearGradient(0, 0, W * 0.2, H);
+  g.addColorStop(0, '#0a1024'); g.addColorStop(0.5, '#111a33'); g.addColorStop(1, '#1a1030');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  var v = ctx.createRadialGradient(W / 2, H * 0.45, Math.min(W, H) * 0.2, W / 2, H * 0.45, Math.max(W, H) * 0.8);
+  v.addColorStop(0, 'rgba(120,180,255,.06)'); v.addColorStop(1, 'rgba(0,0,0,.55)');
+  ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
+}
+
+/* Hublot : on voit l'espace depuis la coursive */
+function drawPortHole(x, y, z, r, t) {
+  var s = toScreen(x, y, z);
+  var R = r * cam.zoom;
+  ctx.save();
+  ctx.beginPath(); ctx.arc(s.x, s.y, R, 0, 6.2832); ctx.clip();
+  var g = ctx.createRadialGradient(s.x - R * 0.3, s.y - R * 0.4, R * 0.1, s.x, s.y, R);
+  g.addColorStop(0, '#1b2551'); g.addColorStop(1, '#070a1c');
+  ctx.fillStyle = g; ctx.fillRect(s.x - R, s.y - R, R * 2, R * 2);
+  ctx.fillStyle = '#ffffff';
+  for (var i = 0; i < 14; i++) {
+    var a = (i * 2.7 + x) % 6.2832, rr = ((i * 37) % 100) / 100 * R;
+    ctx.globalAlpha = 0.3 + 0.5 * Math.abs(Math.sin(t * 1.5 + i));
+    ctx.fillRect(s.x + Math.cos(a) * rr, s.y + Math.sin(a) * rr, 1.6, 1.6);
+  }
+  ctx.globalAlpha = 1;
+  // la planète passe lentement
+  var px = s.x + Math.sin(t * 0.12 + x) * R * 0.5, py = s.y + R * 0.25;
+  ctx.beginPath(); ctx.arc(px, py, R * 0.42, 0, 6.2832);
+  ctx.fillStyle = ballGrad(px, py, R * 0.42, '#ffb37a', '#8c3f5e'); ctx.fill();
+  ctx.restore();
+  ctx.beginPath(); ctx.arc(s.x, s.y, R, 0, 6.2832);
+  ctx.strokeStyle = '#8fa2cc'; ctx.lineWidth = 5 * cam.zoom; ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 1.5 * cam.zoom; ctx.stroke();
+}
+
+function drawShipDeck(t) {
+  var R = SHIP.rect;
+  var cx = (R.x0 + R.x1) / 2, cy = (R.y0 + R.y1) / 2;
+  var w = R.x1 - R.x0, d = R.y1 - R.y0;
+
+  // coque et plancher
+  box(cx, cy, -0.7, w + 0.6, d + 0.6, 0.7, '#1d2544', { top: '#28325a' });
+  isoRect(R.x0, R.y0, R.x1, R.y1, '#46527f');
+  isoRect(R.x0 + 0.25, R.y0 + 0.25, R.x1 - 0.25, R.y1 - 0.25, '#515e91');
+  grid(R.x0, R.y0, R.x1, R.y1, 1, '#ffffff', 0.09);
+
+  // coursive centrale
+  isoRect(R.x0 + 0.4, cy - 0.75, R.x1 - 0.4, cy + 0.75, '#5c6aa4');
+  isoLine(R.x0 + 0.6, cy, R.x1 - 0.6, cy, 'rgba(140,255,228,.35)', 3, [12, 9]);
+
+  // bandes d'avertissement devant le sas
+  isoRect(SHIP.airlock.x - 0.9, SHIP.airlock.y - 0.7, SHIP.airlock.x + 0.9, SHIP.airlock.y + 0.55, '#3c4670');
+  for (var b = 0; b < 5; b++) {
+    var bx = SHIP.airlock.x - 0.8 + b * 0.36;
+    isoRect(bx, SHIP.airlock.y - 0.6, bx + 0.18, SHIP.airlock.y + 0.45, b % 2 ? '#ffca3a' : '#2c3557');
+  }
+
+  // parois du fond avec hublots
+  box(R.x0 - 0.3, cy, 0, 0.4, d + 0.6, 2.6, '#3a4570',
+      { top: '#4a5788', left: '#2b3560', right: '#414d80' });
+  box(cx, R.y0 - 0.3, 0, w + 0.6, 0.4, 2.6, '#3a4570',
+      { top: '#4a5788', left: '#2b3560', right: '#414d80' });
+  drawPortHole(R.x0 - 0.1, cy - 2.2, 1.6, 30, t);
+  drawPortHole(R.x0 - 0.1, cy + 1.4, 1.6, 30, t);
+  drawPortHole(cx - 2.4, R.y0 - 0.1, 1.6, 30, t);
+  drawPortHole(cx + 2.2, R.y0 - 0.1, 1.6, 30, t);
+
+  // bandeau lumineux au plafond
+  var l0 = toScreen(R.x0 + 0.2, R.y0 + 0.1, 2.45), l1 = toScreen(R.x1 - 0.2, R.y0 + 0.1, 2.45);
+  ctx.strokeStyle = rgba('#8affe4', 0.35 + 0.1 * Math.sin(t * 1.5)); ctx.lineWidth = 5 * cam.zoom;
+  ctx.beginPath(); ctx.moveTo(l0.x, l0.y); ctx.lineTo(l1.x, l1.y); ctx.stroke();
+
+  // conduites le long de la paroi
+  for (var pi = 0; pi < 3; pi++) {
+    var py2 = R.y0 - 0.12, zz = 0.5 + pi * 0.45;
+    var p0 = toScreen(R.x0 + 0.4, py2, zz), p1 = toScreen(R.x1 - 0.4, py2, zz);
+    ctx.strokeStyle = ['#6f7ca6', '#8a6fb0', '#6fa695'][pi]; ctx.lineWidth = 5 * cam.zoom;
+    ctx.beginPath(); ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y); ctx.stroke();
+  }
+
+  // socles des réacteurs
+  for (var k = 19; k < S.pads.length; k++) {
+    if (!S.zones.ship) break;
+    drawSocket(S.pads[k], t);
+  }
+}
+
+/* Réservoir : les cristaux montés depuis la base */
+function drawTank(t) {
+  var P = SHIP.tank;
+  shadow(P.x, P.y, 1.1, 0.32);
+  box(P.x, P.y, 0, 1.9, 1.7, 0.28, '#2b3560', { top: '#3a4674' });
+  cyl(P.x, P.y, 0.28, 0.72, 2.1, '#56679c');
+  var frac = clamp(S.tank / TANK_MAX, 0, 1);
+  if (frac > 0.001) {
+    var b = toScreen(P.x, P.y, 0.34), tp = toScreen(P.x, P.y, 0.34 + 2.0 * frac);
+    var rx = 0.66 * (TILE_W / 2) * cam.zoom, ry = 0.66 * (TILE_H / 2) * cam.zoom;
+    ctx.beginPath();
+    ctx.moveTo(b.x - rx, b.y); ctx.lineTo(tp.x - rx, tp.y);
+    ctx.ellipse(tp.x, tp.y, rx, ry, 0, Math.PI, 0, true);
+    ctx.lineTo(b.x + rx, b.y);
+    ctx.ellipse(b.x, b.y, rx, ry, 0, 0, Math.PI, false);
+    ctx.closePath();
+    ctx.fillStyle = rgba('#7fe4ff', 0.85); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(tp.x, tp.y, rx, ry, 0, 0, 6.2832);
+    ctx.fillStyle = rgba('#bff0ff', 0.85); ctx.fill();
+  }
+  // trémie d'alimentation
+  box(P.x, P.y + 1.15, 0, 1.15, 0.85, 0.5, '#2b3560', { top: '#55e0bf', edge: '#d4fff5', edgeA: 0.6 });
+  var hs = toScreen(P.x, P.y + 1.15, 0.52);
+  ctx.fillStyle = rgba('#48e2c6', 0.25 + 0.2 * Math.sin(t * 3));
+  ctx.beginPath(); ctx.ellipse(hs.x, hs.y, 22 * cam.zoom, 11 * cam.zoom, 0, 0, 6.2832); ctx.fill();
+  label(P.x, P.y, 3.0, 'RÉSERVOIR ' + S.tank + ' / ' + TANK_MAX,
+        { size: 11, color: S.tank ? '#bff0ff' : '#ffc9cf', border: 'rgba(140,200,255,.5)' });
+}
+
+/* Console de vente des cellules */
+function drawShipConsole(t) {
+  var P = SHIP.console;
+  shadow(P.x, P.y, 1.0, 0.3);
+  box(P.x, P.y, 0, 1.7, 1.3, 0.2, '#2b3560', { top: '#3a4674' });
+  box(P.x, P.y, 0.2, 1.35, 1.0, 0.7, '#4a5992', { top: '#5c6cae', edge: '#bcd6ff', edgeA: 0.4 });
+  // écrans
+  for (var i = 0; i < 3; i++) {
+    var es = toScreen(P.x - 0.45 + i * 0.45, P.y - 0.55, 1.25);
+    ctx.fillStyle = '#0a142c';
+    roundRect(es.x - 13 * cam.zoom, es.y - 22 * cam.zoom, 26 * cam.zoom, 20 * cam.zoom, 4 * cam.zoom); ctx.fill();
+    ctx.fillStyle = rgba('#8affe4', 0.35 + 0.4 * Math.abs(Math.sin(t * 2 + i)));
+    ctx.fillRect(es.x - 9 * cam.zoom, es.y - 18 * cam.zoom, 18 * cam.zoom, 3 * cam.zoom);
+    ctx.fillRect(es.x - 9 * cam.zoom, es.y - 12 * cam.zoom, 12 * cam.zoom, 3 * cam.zoom);
+    ctx.fillRect(es.x - 9 * cam.zoom, es.y - 6 * cam.zoom, 15 * cam.zoom, 3 * cam.zoom);
+  }
+  // fente
+  var fs = toScreen(P.x, P.y + 0.45, 0.5);
+  ctx.fillStyle = rgba('#ffd76b', 0.5 + 0.3 * Math.sin(t * 4));
+  ctx.beginPath(); ctx.ellipse(fs.x, fs.y, 20 * cam.zoom, 7 * cam.zoom, 0, 0, 6.2832); ctx.fill();
+  label(P.x, P.y, 2.0, 'VENTE CELLULES', { size: 11, color: '#ffd76b', border: 'rgba(255,202,58,.55)' });
+}
+
+/* Sas de sortie */
+function drawAirlock(t) {
+  var P = SHIP.airlock;
+  var s = toScreen(P.x, P.y - 0.9, 0);
+  ctx.save();
+  ctx.translate(s.x, s.y);
+  ctx.fillStyle = '#39456f';
+  roundRect(-30 * cam.zoom, -78 * cam.zoom, 60 * cam.zoom, 78 * cam.zoom, 26 * cam.zoom); ctx.fill();
+  ctx.fillStyle = '#222c4e';
+  roundRect(-22 * cam.zoom, -68 * cam.zoom, 44 * cam.zoom, 68 * cam.zoom, 20 * cam.zoom); ctx.fill();
+  ctx.fillStyle = rgba('#48e2c6', 0.25 + 0.2 * Math.sin(t * 2.5));
+  roundRect(-16 * cam.zoom, -60 * cam.zoom, 32 * cam.zoom, 56 * cam.zoom, 16 * cam.zoom); ctx.fill();
+  ctx.fillStyle = '#8fa2cc';
+  ctx.font = '800 ' + (11 * cam.zoom) + 'px "Baloo 2", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('SAS', 0, -30 * cam.zoom);
+  ctx.restore();
+  var dp = doorProgress('door:base');
+  var ps = toScreen(P.x, P.y, 0.02);
+  discStroke(P.x, P.y, 0.03, 0.62, rgba('#48e2c6', 0.35 + 0.25 * Math.sin(t * 3)), 3);
+  if (dp > 0) {
+    ctx.beginPath();
+    ctx.ellipse(ps.x, ps.y, 0.62 * (TILE_W / 2) * cam.zoom, 0.62 * (TILE_H / 2) * cam.zoom,
+                0, -Math.PI / 2, -Math.PI / 2 + dp * 6.2832);
+    ctx.strokeStyle = '#8affe4'; ctx.lineWidth = 5 * cam.zoom; ctx.stroke();
+  }
+  label(P.x, P.y, 1.5, '↩ SORTIR', { size: 11, color: '#8affe4', border: 'rgba(72,226,198,.5)', near: 5 });
+}
+
+/* Réacteur : cœur de plasma alimenté par le réservoir */
+function drawReactor(p, t) {
+  var d = p.drill, T = TIERS[d.tier];
+  var k = 1 + (p.pop || 0) * 0.18 + d.pulse * 0.06;
+  var z = 0.14, dry = !!d.dry;
+  shadow(p.x, p.y + 0.1, 0.64, 0.3);
+
+  // embase
+  box(p.x, p.y, z, 1.1 * k, 1.1 * k, 0.3 * k, '#2f3a63', { top: '#3e4a7c', edge: '#8fb6ff', edgeA: 0.3 });
+  // collier
+  box(p.x, p.y, z + 0.3 * k, 0.86 * k, 0.86 * k, 0.16 * k, sh(T.dark, 0.9), { top: sh(T.body, 0.95) });
+
+  // colonne de plasma
+  var colR = 0.44 * k, colH = 0.95 * k, base = z + 0.46 * k;
+  cyl(p.x, p.y, base, colR, colH, dry ? '#4a5580' : sh(T.body, 0.8));
+  var cs = toScreen(p.x, p.y, base + colH * 0.5);
+  var gA = dry ? 0.12 : 0.45 + 0.25 * Math.sin(t * 6 + p.i);
+  var cg = ctx.createRadialGradient(cs.x, cs.y, 1, cs.x, cs.y, 24 * cam.zoom * k);
+  cg.addColorStop(0, rgba(T.crystal, gA)); cg.addColorStop(1, rgba(T.glow, 0));
+  ctx.fillStyle = cg;
+  ctx.beginPath(); ctx.ellipse(cs.x, cs.y, 24 * cam.zoom * k, 34 * cam.zoom * k, 0, 0, 6.2832); ctx.fill();
+
+  // anneaux de confinement, calés sur la colonne
+  for (var r = 0; r < 3; r++) {
+    var rs = toScreen(p.x, p.y, base + 0.16 + r * 0.32 * k);
+    ctx.strokeStyle = rgba(dry ? '#5c6688' : T.glow, dry ? 0.5 : 0.85);
+    ctx.lineWidth = 3.5 * cam.zoom;
+    ctx.beginPath();
+    ctx.ellipse(rs.x, rs.y, colR * (TILE_W / 2) * cam.zoom * 1.05, colR * (TILE_H / 2) * cam.zoom * 1.05, 0, 0, 6.2832);
+    ctx.stroke();
+  }
+
+  // chapeau
+  box(p.x, p.y, base + colH, 0.74 * k, 0.74 * k, 0.24 * k, T.body,
+      { top: sh(T.body, 1.12), left: sh(T.dark, 0.8), right: sh(T.dark, 1.05), edge: '#ffffff', edgeA: 0.2 });
+  // témoin
+  var ls = toScreen(p.x, p.y, base + colH + 0.28 * k);
+  ctx.fillStyle = dry ? (Math.sin(t * 5) > 0 ? '#ff6b81' : '#5c2333') : rgba(T.crystal, 0.9);
+  ctx.beginPath(); ctx.arc(ls.x, ls.y, 4 * cam.zoom * k, 0, 6.2832); ctx.fill();
+
+  // conduites d'alimentation
+  [-0.5, 0.5].forEach(function (o) {
+    var a0 = toScreen(p.x + o * k, p.y + 0.35, z + 0.32), a1 = toScreen(p.x + o * k, p.y + 0.35, base + 0.5);
+    ctx.strokeStyle = '#6f7ca6'; ctx.lineWidth = 4 * cam.zoom; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(a0.x, a0.y); ctx.lineTo(a1.x, a1.y); ctx.stroke();
+  });
+
+  label(p.x, p.y, base + colH + 0.85, reactorName(d.tier) + (dry ? ' · à sec' : ''),
+        { size: 12, bg: rgba(T.dark, 0.92), border: rgba(dry ? '#ff7a8a' : T.glow, 0.85), color: '#fff' });
+}
+
+/* Cellule d'énergie produite par un réacteur */
+function drawCell(c, t) {
+  var T = TIERS[c.tier];
+  var lift = 0.26 + Math.sin(t * 2.4 + c.bob) * 0.07;
+  var k = 13 * cam.zoom * c.spawn;
+  shadow(c.x, c.y, 0.24 * c.spawn, 0.3);
+  var s = toScreen(c.x, c.y, lift);
+  var g = ctx.createRadialGradient(s.x, s.y, 1, s.x, s.y, k * 2.6);
+  g.addColorStop(0, rgba(T.glow, 0.5)); g.addColorStop(1, rgba(T.glow, 0));
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(s.x, s.y, k * 2.6, 0, 6.2832); ctx.fill();
+  // capsule
+  ctx.fillStyle = '#cfd9ef';
+  roundRect(s.x - k * 0.7, s.y - k * 1.25, k * 1.4, k * 2.5, k * 0.55); ctx.fill();
+  ctx.fillStyle = rgba(T.crystal, 0.95);
+  roundRect(s.x - k * 0.45, s.y - k * 0.95, k * 0.9, k * 1.9, k * 0.4); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.75)';
+  ctx.fillRect(s.x - k * 0.25, s.y - k * 0.8, k * 0.18, k * 1.4);
+  ctx.fillStyle = '#8fa2cc';
+  ctx.fillRect(s.x - k * 0.7, s.y - k * 0.2, k * 1.4, k * 0.22);
+}
+
 /* ---------- fléchage : où aller maintenant ---------- */
 function drawGoalArrow(t) {
   if (S.goal >= GOALS.length) return;
   var g = GOALS[S.goal];
   if (!g.target) return;
+  if ((g.scene || 'base') !== S.scene) return;
   var tgt = g.target();
   if (!tgt) return;
   var bob = Math.sin(t * 3.4) * 7 * cam.zoom;
@@ -2545,6 +3066,58 @@ function drawGoalArrow(t) {
   ctx.restore();
 }
 
+/* Scène intérieure : pont, machines, cellules, astronaute */
+function renderShip(t) {
+  drawShipDeck(t);
+  push(SHIP.airlock.x + SHIP.airlock.y, function () { drawAirlock(t); });
+  push(SHIP.tank.x + SHIP.tank.y, function () { drawTank(t); });
+  push(SHIP.console.x + SHIP.console.y, function () { drawShipConsole(t); });
+
+  S.pads.forEach(function (p) {
+    if (p.scene !== 'ship') return;
+    if (!S.zones.ship) return;
+    if (!p.drill) {
+      if (p.unlocked) return;
+      push(p.x + p.y + 0.01, function () {
+        var sp = toScreen(p.x, p.y, 0.35 + Math.sin(t * 2 + p.i) * 0.05);
+        ctx.save();
+        ctx.fillStyle = '#cfe0ff';
+        roundRect(sp.x - 11 * cam.zoom, sp.y - 9 * cam.zoom, 22 * cam.zoom, 18 * cam.zoom, 4 * cam.zoom); ctx.fill();
+        ctx.strokeStyle = '#cfe0ff'; ctx.lineWidth = 3.5 * cam.zoom;
+        ctx.beginPath(); ctx.arc(sp.x, sp.y - 9 * cam.zoom, 6.5 * cam.zoom, Math.PI, 0); ctx.stroke();
+        ctx.fillStyle = '#2b3a63';
+        ctx.beginPath(); ctx.arc(sp.x, sp.y, 3 * cam.zoom, 0, 6.2832); ctx.fill();
+        ctx.restore();
+        label(p.x, p.y, 1.05, fmt(Math.max(0, Math.ceil(p.cost - p.paid))) + ' ◈',
+              { size: 13, color: S.credits > 0 ? '#8affe4' : '#ffd9dd', border: 'rgba(72,226,198,.55)' });
+      });
+      return;
+    }
+    if (drag.active && drag.pad === p) return;
+    push(p.x + p.y + 0.02, function () { drawReactor(p, t); });
+  });
+
+  S.cells.forEach(function (c) { push(c.x + c.y + 0.03, function () { drawCell(c, t); }); });
+  S.drones.forEach(function (d) {
+    if (d.scene !== 'ship') return;
+    push(d.x + d.y + 0.05, function () { drawDrone(d, t); });
+  });
+  push(S.player.x + S.player.y + 0.06, function () { drawAstronaut(S.player, t); });
+}
+
+/* Flash de fusion et fondu de changement de carte */
+function drawOverlays(t) {
+  if (FX.flash > 0) {
+    ctx.fillStyle = 'rgba(255,255,255,' + (FX.flash * 0.5).toFixed(3) + ')';
+    ctx.fillRect(0, 0, W, H);
+  }
+  if (trans.active) {
+    var a = trans.t < 0.29 ? trans.t / 0.29 : Math.max(0, (0.58 - trans.t) / 0.29);
+    ctx.fillStyle = 'rgba(4,7,16,' + a.toFixed(3) + ')';
+    ctx.fillRect(0, 0, W, H);
+  }
+}
+
 /* ---------- assemblage de la scène ---------- */
 var SOLARS = [{ x: 22.0, y: 7.4 }, { x: 15.0, y: 16.2 }, { x: 0.9, y: 6.0 }];
 var ANTENNAS = [{ x: 1.0, y: 15.6 }, { x: 16.6, y: 0.9 }];
@@ -2552,12 +3125,19 @@ var CRATES = [{ x: 2.2, y: 13.2, t: 3 }, { x: 2.9, y: 13.7, t: 5 }, { x: 1.8, y:
 
 function render(t) {
   ctx.clearRect(0, 0, W, H);
-  drawSpace(t);
+  if (S.scene === 'ship') drawShipBackground(t); else drawSpace(t);
   var shk = FX.shake;
   if (shk > 0) {
     ctx.save();
     ctx.translate(rnd(-shk, shk), rnd(-shk, shk));
   }
+
+  if (S.scene === 'ship') { renderShip(t); flushQ(); drawFX(t); drawGoalArrow(t); flushLabels();
+    if (shk > 0) ctx.restore();
+    drawOverlays(t);
+    return;
+  }
+
   drawPlatform(t);
 
   // barrière lumineuse sur le pourtour
@@ -2589,7 +3169,7 @@ function render(t) {
 
   // socles verrouillés : cadenas + prix
   S.pads.forEach(function (p) {
-    if (p.unlocked || !S.zones[p.zone]) return;
+    if (p.scene !== 'base' || p.unlocked || !S.zones[p.zone]) return;
     push(p.x + p.y + 0.01, function () {
       var s = toScreen(p.x, p.y, 0.35 + Math.sin(t * 2 + p.i) * 0.05);
       ctx.save();
@@ -2611,7 +3191,7 @@ function render(t) {
 
   // foreuses
   S.pads.forEach(function (p) {
-    if (!p.drill || !S.zones[p.zone]) return;
+    if (p.scene !== 'base' || !p.drill || !S.zones[p.zone]) return;
     if (drag.active && drag.pad === p) return;   // celle qu'on déplace est dessinée au-dessus
     push(p.x + p.y + 0.02, function () { drawDrill(p, t); });
   });
@@ -2628,7 +3208,10 @@ function render(t) {
   });
 
   // drones et astronaute
-  S.drones.forEach(function (d) { push(d.x + d.y + 0.05, function () { drawDrone(d, t); }); });
+  S.drones.forEach(function (d) {
+    if ((d.scene || 'base') !== 'base') return;
+    push(d.x + d.y + 0.05, function () { drawDrone(d, t); });
+  });
   push(S.player.x + S.player.y + 0.06, function () { drawAstronaut(S.player, t); });
 
   flushQ();
@@ -2636,10 +3219,7 @@ function render(t) {
   drawGoalArrow(t);
   flushLabels();
   if (shk > 0) ctx.restore();
-  if (FX.flash > 0) {
-    ctx.fillStyle = 'rgba(255,255,255,' + (FX.flash * 0.5).toFixed(3) + ')';
-    ctx.fillRect(0, 0, W, H);
-  }
+  drawOverlays(t);
 
   // foreuse en cours de glissement
   if (drag.active && drag.pad && drag.pad.drill) {
@@ -2687,7 +3267,7 @@ var el = function (id) { return document.getElementById(id); };
 var creditsVal = el('creditsVal'), creditsBox = el('creditsBox');
 var carryFill = el('carryFill'), carryLabel = el('carryLabel');
 var overlay = el('overlay'), toastsEl = el('toasts'), hintEl = el('hint');
-var hintTimer = 0, lastCredits = -1, lastCarry = -1, lastCap = -1, lastClaimable = -1;
+var hintTimer = 0, lastCredits = -1, lastCarry = -1, lastCap = -1, lastClaimable = -1, lastCarryType = 0;
 
 function toast(msg, kind) {
   var d = document.createElement('div');
@@ -2726,60 +3306,93 @@ document.addEventListener('click', function (e) {
 });
 
 /* ---------- boutique ---------- */
-function freePads() {
-  return S.pads.filter(function (p) { return p.unlocked && !p.drill; }).length;
+function freePads(scene) {
+  scene = scene || S.scene;
+  return S.pads.filter(function (p) { return p.scene === scene && p.unlocked && !p.drill; }).length;
 }
 function renderShop() {
   var body = el('shopBody');
-  var cost = shopCost(S.bought);
+  var ship = S.scene === 'ship';
+  var cost = ship ? reactorCost(S.boughtR) : shopCost(S.bought);
   var free = freePads();
   var canPay = S.credits >= cost;
   var html = '';
-  html += '<div class="row">' +
-    '<div class="emoji">⛏️</div>' +
-    '<div class="txt"><b>Foreuse ' + TIERS[0].name + '</b>' +
-    '<small>Un cristal de ' + fmt(drillValue(0)) + ' ◈ toutes les ' + drillPeriod(0).toFixed(1) + ' s</small>' +
-    '<div class="val">' + (free
-      ? 'Socles libres : <span class="to">' + free + '</span>'
-      : '<span style="color:#ffc9cf">Aucun socle libre — va en débloquer un</span>') + '</div></div>' +
-    '<button class="buy" id="buyDrill" ' + (canPay && free ? '' : 'disabled') + '>' + fmt(cost) + ' ◈</button>' +
-    '</div>';
-  var adWait = window.Ads ? window.Ads.waitFor('freeDrill') : 0;
-  var adOk = window.Ads && window.Ads.canRewarded('freeDrill') && free > 0;
-  html += '<div class="row">' +
-    '<div class="emoji">🎁</div>' +
-    '<div class="txt"><b>Foreuse offerte</b>' +
-    '<small>Regarde une courte vidéo, repars avec une ' + TIERS[0].name + '</small>' +
-    '<div class="val">' + (free
-      ? (adWait ? 'Disponible dans ' + mmss(adWait) : '<span class="to">Disponible</span>')
-      : '<span style="color:#ffc9cf">Aucun socle libre</span>') + '</div></div>' +
-    '<button class="rw-btn" id="buyDrillAd"' + (adOk ? '' : ' disabled') + '>' +
-    '<span class="play">▶</span><span>Gratuit</span></button>' +
-    '</div>';
-  html += '<p class="panel-sub" style="margin-top:14px">Catalogue des rangs — chaque fusion double presque la valeur du cristal.</p>';
-  for (var i = 0; i <= Math.min(MAX_TIER, S.bestTier + 1); i++) {
-    var T = TIERS[i], owned = S.pads.some(function (p) { return p.drill && p.drill.tier === i; });
-    html += '<div class="row" style="opacity:' + (i <= S.bestTier ? 1 : 0.55) + '">' +
-      '<div class="emoji" style="background:' + rgba(T.glow, 0.18) + ';color:' + T.crystal + '">◆</div>' +
-      '<div class="txt"><b>' + T.name + (owned ? '' : (i <= S.bestTier ? '' : ' — à découvrir')) + '</b>' +
-      '<small>' + fmt(drillValue(i)) + ' ◈ par cristal · un cristal toutes les ' + drillPeriod(i).toFixed(1) + ' s</small></div>' +
+
+  if (ship) {
+    html += '<div class="row">' +
+      '<div class="emoji">⚛️</div>' +
+      '<div class="txt"><b>Réacteur ' + reactorName(0) + '</b>' +
+      '<small>Consomme un cristal du réservoir et produit une cellule de ' +
+      fmt(cellValue(0)) + ' ◈ toutes les ' + reactorPeriod(0).toFixed(1) + ' s</small>' +
+      '<div class="val">' + (free
+        ? 'Socles libres à bord : <span class="to">' + free + '</span>'
+        : '<span style="color:#ffc9cf">Aucun socle libre à bord</span>') + '</div></div>' +
+      '<button class="buy" id="buyDrill" ' + (canPay && free ? '' : 'disabled') + '>' + fmt(cost) + ' ◈</button>' +
       '</div>';
+    html += '<p class="panel-sub" style="margin-top:14px">Les réacteurs se fusionnent comme les foreuses. ' +
+      'Chaque rang produit des cellules bien plus rentables — mais il faut du carburant : monte des cristaux ' +
+      'dans le réservoir, ou installe le monte-charge.</p>';
+    for (var r = 0; r <= Math.min(MAX_TIER, S.bestTier + 1); r++) {
+      var TR = TIERS[r];
+      html += '<div class="row" style="opacity:' + (r <= S.bestTier ? 1 : 0.55) + '">' +
+        '<div class="emoji" style="background:' + rgba(TR.glow, 0.18) + ';color:' + TR.crystal + '">⚛</div>' +
+        '<div class="txt"><b>' + reactorName(r) + '</b>' +
+        '<small>' + fmt(cellValue(r)) + ' ◈ par cellule · une cellule toutes les ' + reactorPeriod(r).toFixed(1) + ' s</small></div>' +
+        '</div>';
+    }
+    body.innerHTML = html;
+  } else {
+    var adWait = window.Ads ? window.Ads.waitFor('freeDrill') : 0;
+    var adOk = window.Ads && window.Ads.canRewarded('freeDrill') && free > 0;
+    html += '<div class="row">' +
+      '<div class="emoji">⛏️</div>' +
+      '<div class="txt"><b>Foreuse ' + TIERS[0].name + '</b>' +
+      '<small>Un cristal de ' + fmt(drillValue(0)) + ' ◈ toutes les ' + drillPeriod(0).toFixed(1) + ' s</small>' +
+      '<div class="val">' + (free
+        ? 'Socles libres : <span class="to">' + free + '</span>'
+        : '<span style="color:#ffc9cf">Aucun socle libre — va en débloquer un</span>') + '</div></div>' +
+      '<button class="buy" id="buyDrill" ' + (canPay && free ? '' : 'disabled') + '>' + fmt(cost) + ' ◈</button>' +
+      '</div>';
+    html += '<div class="row">' +
+      '<div class="emoji">🎁</div>' +
+      '<div class="txt"><b>Foreuse offerte</b>' +
+      '<small>Regarde une courte vidéo, repars avec une ' + TIERS[0].name + '</small>' +
+      '<div class="val">' + (free
+        ? (adWait ? 'Disponible dans ' + mmss(adWait) : '<span class="to">Disponible</span>')
+        : '<span style="color:#ffc9cf">Aucun socle libre</span>') + '</div></div>' +
+      '<button class="rw-btn" id="buyDrillAd"' + (adOk ? '' : ' disabled') + '>' +
+      '<span class="play">▶</span><span>Gratuit</span></button>' +
+      '</div>';
+    html += '<p class="panel-sub" style="margin-top:14px">Catalogue des rangs — chaque fusion double presque la valeur du cristal.</p>';
+    for (var i = 0; i <= Math.min(MAX_TIER, S.bestTier + 1); i++) {
+      var T = TIERS[i], owned = S.pads.some(function (p) { return p.drill && p.drill.tier === i; });
+      html += '<div class="row" style="opacity:' + (i <= S.bestTier ? 1 : 0.55) + '">' +
+        '<div class="emoji" style="background:' + rgba(T.glow, 0.18) + ';color:' + T.crystal + '">◆</div>' +
+        '<div class="txt"><b>' + T.name + (owned ? '' : (i <= S.bestTier ? '' : ' — à découvrir')) + '</b>' +
+        '<small>' + fmt(drillValue(i)) + ' ◈ par cristal · un cristal toutes les ' + drillPeriod(i).toFixed(1) + ' s</small></div>' +
+        '</div>';
+    }
+    body.innerHTML = html;
   }
-  body.innerHTML = html;
+
   var btn = el('buyDrill');
   if (btn) btn.onclick = function () {
-    var c = shopCost(S.bought);
+    var c = ship ? reactorCost(S.boughtR) : shopCost(S.bought);
     if (S.credits < c) { Audio_.error(); toast('Pas assez de crédits', 'bad'); return; }
     var target = null;
-    for (var i = 0; i < S.pads.length; i++) if (S.pads[i].unlocked && !S.pads[i].drill) { target = S.pads[i]; break; }
-    if (!target) { Audio_.error(); toast('Aucun socle libre — débloque-en un !', 'bad'); return; }
-    S.credits -= c; S.bought++;
+    for (var i = 0; i < S.pads.length; i++) {
+      var p = S.pads[i];
+      if (p.scene === S.scene && p.unlocked && !p.drill) { target = p; break; }
+    }
+    if (!target) { Audio_.error(); toast('Aucun socle libre', 'bad'); return; }
+    S.credits -= c;
+    if (ship) S.boughtR++; else S.bought++;
     target.drill = { tier: 0, timer: 0, pulse: 1, spin: 0 };
     target.pop = 1;
     Audio_.buy();
     burst(target.x, target.y, 0.6, TIERS[0].glow, 18, 1.1);
-    floater(target.x, target.y, 1.5, 'Mk-I livrée !', '#8affe4');
-    toast('Foreuse installée 🛠️', 'good');
+    floater(target.x, target.y, 1.5, (ship ? reactorName(0) : 'Mk-I') + ' livré !', '#8affe4');
+    toast(ship ? 'Réacteur installé ⚛️' : 'Foreuse installée 🛠️', 'good');
     save(); renderShop();
   };
 
@@ -2787,7 +3400,7 @@ function renderShop() {
   if (adBtn) adBtn.onclick = function () {
     if (!window.Ads || !window.Ads.canRewarded('freeDrill')) return;
     var target = null;
-    for (var i = 0; i < S.pads.length; i++) if (S.pads[i].unlocked && !S.pads[i].drill) { target = S.pads[i]; break; }
+    for (var i = 0; i < S.pads.length; i++) if (S.pads[i].scene === 'base' && S.pads[i].unlocked && !S.pads[i].drill) { target = S.pads[i]; break; }
     if (!target) { Audio_.error(); toast('Aucun socle libre', 'bad'); return; }
     adBtn.disabled = true;
     window.Ads.showRewarded('freeDrill').then(function (ok) {
@@ -2822,7 +3435,12 @@ function renderUpgrades() {
     if (u.id === 'speed') { cur = (3.5 + 0.55 * lvl).toFixed(1); nxt = (3.5 + 0.55 * (lvl + 1)).toFixed(1); cur += ' m/s'; nxt += ' m/s'; }
     if (u.id === 'capacity') { cur = (8 + 5 * lvl) + ' objets'; nxt = (8 + 5 * (lvl + 1)) + ' objets'; }
     if (u.id === 'refinery') { cur = (1 / (0.55 * Math.pow(0.82, lvl))).toFixed(1) + '/s'; nxt = (1 / (0.55 * Math.pow(0.82, lvl + 1))).toFixed(1) + '/s'; }
-    if (u.id === 'drones') { cur = lvl + ' drone' + (lvl > 1 ? 's' : ''); nxt = (lvl + 1) + ' drone' + (lvl + 1 > 1 ? 's' : ''); }
+    if (u.id === 'drones') {
+      var actuels = [];
+      for (var q = 0; q < lvl; q++) actuels.push(roleLabel(droneRole(q)));
+      cur = lvl ? actuels.join(', ') : 'aucun drone';
+      nxt = '+ ' + roleLabel(droneRole(lvl));
+    }
     var pips = '<div class="pips">';
     for (var i = 0; i < u.max; i++) pips += '<span class="pip' + (i < lvl ? ' on' : '') + '"></span>';
     pips += '</div>';
@@ -2848,7 +3466,9 @@ function renderUpgrades() {
     html += '<div class="row"' + (locked ? ' style="opacity:.5"' : '') + '>' +
       '<div class="emoji">' + l.icon + '</div>' +
       '<div class="txt"><b>' + l.name + '</b>' +
-      '<small>' + (l.carries === 'ore' ? 'Achemine les cristaux tout seul' : 'Vend les puces automatiquement') + '</small>' +
+      '<small>' + (l.carries === 'lift'
+        ? 'Remplit le réservoir du vaisseau — ne prend que le surplus, il laisse ' + LIFT_KEEP + ' cristaux au sol'
+        : l.carries === 'ore' ? 'Achemine les cristaux tout seul' : 'Vend les puces automatiquement') + '</small>' +
       '<div class="val">' + (lvl ? lineRate(l.id).toFixed(2) + '/s' : 'inactive') +
       (maxed || locked ? '' : '<span class="arrow">→</span><span class="to">' + ((lvl + 1) * 0.45).toFixed(2) + '/s</span>') +
       '</div>' + pips + '</div>' +
@@ -2996,7 +3616,8 @@ function renderMenu() {
     '<div class="stat"><b>' + TIERS[S.bestTier].name + '</b><small>meilleur rang</small></div>' +
     '<div class="stat"><b>' + h + 'h ' + m + 'm</b><small>temps de mission</small></div>' +
     '<div class="stat"><b>' + S.pads.filter(function (p) { return p.drill; }).length + ' / ' + PAD_COUNT + '</b><small>socles équipés</small></div>' +
-    '<div class="stat"><b>' + (1 + (S.zones.bay ? 1 : 0) + (S.zones.dome ? 1 : 0) + (S.zones.orbit ? 1 : 0)) + ' / 4</b><small>zones ouvertes</small></div>' +
+    '<div class="stat"><b>' + (1 + (S.zones.bay ? 1 : 0) + (S.zones.dome ? 1 : 0) + (S.zones.orbit ? 1 : 0) + (S.zones.ship ? 1 : 0)) + ' / 5</b><small>zones ouvertes</small></div>' +
+    '<div class="stat"><b>' + fmt(S.tank) + '</b><small>cristaux en réservoir</small></div>' +
     '<div class="stat"><b>×' + prestigeMult().toFixed(2) + '</b><small>bonus de commandement</small></div>' +
     '<div class="stat"><b>' + S.contractsDone + '</b><small>contrats honorés</small></div>' +
     '</div>' +
@@ -3138,10 +3759,11 @@ function updateHUD(dt) {
     creditsVal.textContent = fmt(S.credits);
   }
   var cap = playerCap(), n = S.player.carry.length;
-  if (n !== lastCarry || cap !== lastCap) {
-    lastCarry = n; lastCap = cap;
+  if (n !== lastCarry || cap !== lastCap || S.player.carryType !== lastCarryType) {
+    lastCarry = n; lastCap = cap; lastCarryType = S.player.carryType;
     carryFill.style.width = (n / cap * 100) + '%';
-    carryLabel.textContent = n + ' / ' + cap + (S.player.carryType === 'chip' ? ' ◈' : ' ◆');
+    carryLabel.textContent = n + ' / ' + cap +
+      (S.player.carryType === 'chip' ? ' ◈' : S.player.carryType === 'cell' ? ' ⚛' : ' ◆');
   }
   if (hintTimer > 0) { hintTimer -= dt; if (hintTimer <= 0) hintEl.classList.remove('on'); }
   // met en évidence la boutique quand un socle est libre et abordable
@@ -3230,7 +3852,8 @@ window.AstroBase = {
   start: function () { S.started = true; closeAll(); },
   tp: function (x, y) { S.player.x = x; S.player.y = y; cam.x = x; cam.y = y; },
   pos: { refineryIn: REFINERY_IN, refineryOut: REFINERY_OUT, terminal: TERMINAL_POS, market: MARKET_POS, pad: padPos },
-  zones: ZONES, lines: LINES,
+  zones: ZONES, lines: LINES, ship: SHIP,
+  scene: function (n) { S.scene = n; },
   goto: function (name) { var p = this.pos[name]; if (p) this.tp(p.x, p.y); },
   give: function (n) { S.credits += n; },
   pads: function () { return S.pads; },
