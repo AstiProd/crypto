@@ -3733,6 +3733,11 @@ el('btnShop').onclick = function () { renderShop(); openPanel('panelShop'); };
 el('btnUpgrades').onclick = function () { renderUpgrades(); openPanel('panelUpgrades'); };
 el('btnContracts').onclick = function () { renderContracts(); openPanel('panelContracts'); };
 el('btnMenu').onclick = function () { renderMenu(); openPanel('panelMenu'); };
+/* Second accès au menu : le compteur de crédits. Le bouton ⋯ du coin
+   supérieur droit peut être masqué par l'interface qui affiche le jeu. */
+creditsBox.onclick = function () { renderMenu(); openPanel('panelMenu'); };
+creditsBox.style.cursor = 'pointer';
+creditsBox.title = 'Menu';
 el('btnSound').onclick = function () { Audio_.init(); toggleSound(); };
 el('btnPlay').onclick = function () { closeAll(); S.started = true; Audio_.init(); };
 
