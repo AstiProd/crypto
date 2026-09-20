@@ -4463,7 +4463,7 @@ function devSectionHtml() {
     '<button class="menu-btn" data-dev="all">🔓 Tout débloquer — zones et socles</button>' +
     '<button class="menu-btn" data-dev="max">⭐ Rang maximum sur tous les socles</button>' +
     '<button class="menu-btn" data-dev="auto">🛤️ Convoyeurs au max, réservoir plein, 4 drones</button>' +
-    '<button class="menu-btn" data-dev="off">🙈 Masquer le bac à sable</button>';
+    '';
 }
 
 function devAction(what) {
@@ -4526,8 +4526,9 @@ function renderMenu() {
         : '🚫 Supprimer les pubs (achat intégré)') + '</button>' +
     '<button class="menu-btn" id="mPrivacy">🔒 Confidentialité des publicités</button>' +
     '<button class="menu-btn danger" id="mReset">♻️ Nouvelle partie</button>' +
+    '<button class="menu-btn" id="mDev">🧪 ' + (devOn ? 'Masquer le bac à sable' : 'Bac à sable — outils de test') + '</button>' +
     (devOn ? devSectionHtml() : '') +
-    '<p class="panel-sub" style="text-align:center;margin:6px 0 0;cursor:default" id="mVersion">' +
+    '<p class="panel-sub" style="text-align:center;margin:6px 0 0" id="mVersion">' +
     'Astro Base Tycoon v1.0 — sauvegarde automatique</p>';
   el('mHow').onclick = function () { openPanel('panelWelcome'); };
   el('mSound').onclick = function () { toggleSound(); renderMenu(); };
@@ -4541,18 +4542,17 @@ function renderMenu() {
   };
   el('mPrivacy').onclick = function () { if (window.Ads) window.Ads.privacyOptions(); };
 
-  var ver = el('mVersion');
-  if (ver) ver.onclick = function () {
-    if (devOn) return;
-    devTaps++;
-    if (devTaps >= 5) {
-      devOn = true; devTaps = 0;
-      try { localStorage.setItem(SAVE_KEY + '-dev', '1'); } catch (e) {}
-      Audio_.unlock();
-      toast('Bac à sable débloqué 🧪', 'good');
-      renderMenu();
-    } else if (devTaps >= 3) {
-      toast('Encore ' + (5 - devTaps) + '…', '');
+  el('mDev').onclick = function () {
+    devOn = !devOn;
+    try {
+      if (devOn) localStorage.setItem(SAVE_KEY + '-dev', '1');
+      else localStorage.removeItem(SAVE_KEY + '-dev');
+    } catch (e) {}
+    if (devOn) Audio_.buy();
+    renderMenu();
+    if (devOn) {
+      var panel = el('panelMenu');
+      setTimeout(function () { panel.scrollTop = panel.scrollHeight; }, 60);
     }
   };
   Array.prototype.forEach.call(el('menuBody').querySelectorAll('[data-dev]'), function (b) {
