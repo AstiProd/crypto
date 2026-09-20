@@ -3606,6 +3606,60 @@ function updateContractTimers(dt) {
   }
 }
 
+/* ---------- bac à sable (accès discret : 5 appuis sur la version) ---------- */
+var devOn = false, devTaps = 0;
+try { devOn = localStorage.getItem(SAVE_KEY + '-dev') === '1'; } catch (e) {}
+
+function devSectionHtml() {
+  return '<div class="section-title">Bac à sable</div>' +
+    '<p class="panel-sub" style="margin:-4px 0 10px">Pour tester la progression sans jouer les heures. ' +
+    'Rien de tout ceci n\'est nécessaire pour finir le jeu normalement.</p>' +
+    '<button class="menu-btn" data-dev="m1">＋ 1 M ◈</button>' +
+    '<button class="menu-btn" data-dev="g5">＋ 5 Md ◈</button>' +
+    '<button class="menu-btn" data-dev="all">🔓 Tout débloquer — zones et socles</button>' +
+    '<button class="menu-btn" data-dev="max">⭐ Rang maximum sur tous les socles</button>' +
+    '<button class="menu-btn" data-dev="auto">🛤️ Convoyeurs au max, réservoir plein, 4 drones</button>' +
+    '<button class="menu-btn" data-dev="off">🙈 Masquer le bac à sable</button>';
+}
+
+function devAction(what) {
+  var i, p;
+  if (what === 'm1') { S.credits += 1e6; toast('+ 1 M ◈', 'good'); }
+  if (what === 'g5') { S.credits += 5e9; toast('+ 5 Md ◈', 'good'); }
+  if (what === 'all') {
+    for (var z in S.zones) { S.zones[z] = true; if (S.zonePaid[z] !== undefined) S.zonePaid[z] = 0; }
+    for (i = 0; i < S.pads.length; i++) {
+      p = S.pads[i];
+      p.unlocked = true; p.paid = p.cost;
+      if (!p.drill) p.drill = { tier: 0, timer: 0, pulse: 0, spin: 0 };
+    }
+    toast('Zones et socles ouverts 🔓', 'good');
+  }
+  if (what === 'max') {
+    for (i = 0; i < S.pads.length; i++) {
+      p = S.pads[i];
+      if (p.drill) { p.drill.tier = MAX_TIER; p.drill.pulse = 1; }
+    }
+    S.bestTier = MAX_TIER;
+    flash(0.3); shakeCam(10);
+    toast('Tous les socles en rang ' + TIERS[MAX_TIER].name, 'good');
+  }
+  if (what === 'auto') {
+    S.lines = { mine: LINE_MAX, bay: LINE_MAX, orbit: LINE_MAX, market: LINE_MAX, lift: LINE_MAX };
+    S.tank = TANK_MAX;
+    S.up.drones = 4; S.up.speed = 6; S.up.capacity = 6; S.up.refinery = 6;
+    toast('Automatisation au maximum 🛤️', 'good');
+  }
+  if (what === 'off') {
+    devOn = false; devTaps = 0;
+    try { localStorage.removeItem(SAVE_KEY + '-dev'); } catch (e) {}
+    toast('Bac à sable masqué', 'good');
+  }
+  creditsPulse();
+  save();
+  renderMenu();
+}
+
 /* ---------- menu ---------- */
 function renderMenu() {
   var h = Math.floor(S.playTime / 3600), m = Math.floor((S.playTime % 3600) / 60);
@@ -3628,7 +3682,9 @@ function renderMenu() {
         : '🚫 Supprimer les pubs (achat intégré)') + '</button>' +
     '<button class="menu-btn" id="mPrivacy">🔒 Confidentialité des publicités</button>' +
     '<button class="menu-btn danger" id="mReset">♻️ Nouvelle partie</button>' +
-    '<p class="panel-sub" style="text-align:center;margin:6px 0 0">Astro Base Tycoon v1.0 — sauvegarde automatique</p>';
+    (devOn ? devSectionHtml() : '') +
+    '<p class="panel-sub" style="text-align:center;margin:6px 0 0;cursor:default" id="mVersion">' +
+    'Astro Base Tycoon v1.0 — sauvegarde automatique</p>';
   el('mHow').onclick = function () { openPanel('panelWelcome'); };
   el('mSound').onclick = function () { toggleSound(); renderMenu(); };
   el('mNoAds').onclick = function () {
@@ -3640,6 +3696,24 @@ function renderMenu() {
     save(); renderMenu();
   };
   el('mPrivacy').onclick = function () { if (window.Ads) window.Ads.privacyOptions(); };
+
+  var ver = el('mVersion');
+  if (ver) ver.onclick = function () {
+    if (devOn) return;
+    devTaps++;
+    if (devTaps >= 5) {
+      devOn = true; devTaps = 0;
+      try { localStorage.setItem(SAVE_KEY + '-dev', '1'); } catch (e) {}
+      Audio_.unlock();
+      toast('Bac à sable débloqué 🧪', 'good');
+      renderMenu();
+    } else if (devTaps >= 3) {
+      toast('Encore ' + (5 - devTaps) + '…', '');
+    }
+  };
+  Array.prototype.forEach.call(el('menuBody').querySelectorAll('[data-dev]'), function (b) {
+    b.onclick = function () { devAction(b.getAttribute('data-dev')); };
+  });
   el('mReset').onclick = function () {
     if (!confirm('Effacer la base et recommencer à zéro ?')) return;
     try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
